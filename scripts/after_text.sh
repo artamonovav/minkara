@@ -15,7 +15,7 @@ if ! flock -n 9; then
 fi
 
 echo "[$(date -Is)] ждём текстовые стадии (5/7 медиа или DONE)"
-deadline=$((SECONDS + 8 * 3600))
+deadline=$((SECONDS + 24 * 3600))
 while (( SECONDS < deadline )); do
   last="$(grep -E '^=== ' "$LOG" | tail -1 || true)"
   case "$last" in
