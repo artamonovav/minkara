@@ -43,7 +43,9 @@ Yahoo! JAPAN). Заголовки (`Accept-Language` и пр.) больше не
 │   ├── 02_fetch.py            # скачивание страниц и картинок
 │   ├── 03_translate.py        # перевод текстов на русский
 │   ├── 04_build.py            # сборка офлайн-сайта с поиском
+│   ├── 05_glossary.py         # глоссарий терминов через DeepL
 │   ├── crawl_all.sh           # полная выкачка по стадиям (лог в work/)
+│   ├── translate_all.sh       # DeepL для длинных + Google + пост-редактирование
 │   ├── serve.py               # локальный просмотр (опционально)
 │   ├── setup.sh               # установка окружения и MCP
 │   └── setup_mcp.py           # настройка mcp.servers в opencode.json
@@ -127,6 +129,34 @@ tail -f work/crawl.log                       # прогресс
 Стадии: discovery (заметки, товары, отзывы) → заметки → товары → отзывы →
 медиа → (опционально перевод) → сборка. Повторный запуск продолжает с места
 остановки; одновременно может работать только один экземпляр (flock).
+
+## Перевод
+
+Провайдеры: `echo` (заглушка), `google` (бесплатный веб-эндпоинт),
+`google_cloud`, `deepl`, `openai`-совместимый API, `ollama` (локально).
+
+Ключ DeepL хранится в `config/settings.local.env` (файл в `.gitignore`,
+права 600):
+
+```bash
+MINKARA_TRANSLATE_API_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx
+```
+
+Сценарий с гибридной схемой:
+
+```bash
+bash scripts/translate_all.sh
+```
+
+1. DeepL переводит объёмные тексты (`MINKARA_DEEPL_MIN_CHARS`, по умолчанию 300);
+2. Google — остальное;
+3. DeepL заново переводит сегменты Google, которые эвристики сочли плохими
+   (`--fix-bad`);
+4. сборка сайта.
+
+Проверка остатка квоты: `python3 scripts/03_translate.py --check-usage`.
+Глоссарий: ручной `config/glossary.yaml` (приоритет) + сгенерированный
+`config/glossary.generated.yaml` (`scripts/05_glossary.py`).
 
 ## Требования к сети
 

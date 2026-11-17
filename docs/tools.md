@@ -142,6 +142,27 @@ ollama pull qwen2.5:14b-instruct   # или gemma3:12b, mistral-nemo
 * `--provider google_cloud` — официальный API, нужен ключ
   (`MINKARA_TRANSLATE_API_KEY`).
 
+### DeepL
+
+Ключ хранится в `config/settings.local.env` (gitignored, права 600):
+
+```bash
+MINKARA_TRANSLATE_API_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx
+```
+
+Суффикс `:fx` включает free-эндпоинт, иначе используется pro.
+
+```bash
+python3 scripts/03_translate.py --check-usage          # остаток квоты
+python3 scripts/03_translate.py --provider deepl --min-chars 300
+python3 scripts/03_translate.py --fix-bad --fix-engine google
+bash scripts/translate_all.sh                          # гибридная схема
+```
+
+DeepL используется для объёмных текстов и пост-редактирования неудачных
+сегментов Google. Глоссарий терминов собирается `scripts/05_glossary.py`
+(контекстный перевод терминов, ручные термины приоритетнее).
+
 ### OpenAI-совместимый API
 
 `--provider openai` + `MINKARA_TRANSLATE_BASE_URL`, `MINKARA_TRANSLATE_API_KEY`,

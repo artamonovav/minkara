@@ -94,7 +94,8 @@ def text_hash(text: str) -> str:
 class Store:
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
-        self.conn = sqlite3.connect(self.path)
+        # timeout нужен, чтобы не падать при параллельной записи (crawl + перевод)
+        self.conn = sqlite3.connect(self.path, timeout=30)
         self.conn.row_factory = sqlite3.Row
 
     def close(self) -> None:
@@ -275,6 +276,22 @@ class Store:
         )
         self.conn.commit()
 
+    def purge_non_japanese(self) -> int:
+        """Удаляет единицы без японского текста (числа, латиница)."""
+        rows = self.conn.execute("SELECT id, ja FROM text_units").fetchall()
+        ids = []
+        for row in rows:
+            text = row["ja"] or ""
+            has_cjk = any(
+                "\u3040" <= ch <= "\u30ff" or "\u3400" <= ch <= "\u9fff" for ch in text
+            )
+            if not has_cjk:
+                ids.append((row["id"],))
+        if ids:
+            self.conn.executemany("DELETE FROM text_units WHERE id = ?", ids)
+            self.conn.commit()
+        return len(ids)
+
     def pending_units(self, limit: int | None = None) -> list[sqlite3.Row]:
         sql = """SELECT * FROM text_units
                  WHERE ru IS NULL AND length(trim(ja)) > 0
@@ -285,11 +302,15 @@ class Store:
             params.append(limit)
         return list(self.conn.execute(sql, params))
 
-    def cached_translation(self, hash_value: str) -> str | None:
-        row = self.conn.execute(
-            "SELECT ru FROM text_units WHERE hash = ? AND ru IS NOT NULL LIMIT 1",
-            (hash_value,),
-        ).fetchone()
+    def cached_translation(self, hash_value: str, engine: str | None = None) -> str | None:
+        sql = "SELECT ru FROM text_units WHERE hash = ? AND ru IS NOT NULL"
+        params: list[Any] = [hash_value]
+        if engine:
+            # Кэш привязан к движку: echo-заглушки не должны попадать
+            # в результат google/deepl/openai.
+            sql += " AND engine = ?"
+            params.append(engine)
+        row = self.conn.execute(sql + " LIMIT 1", params).fetchone()
         return row["ru"] if row else None
 
     def units_for_page(self, page_id: int) -> dict[tuple[str, int], str]:

@@ -19,6 +19,9 @@ except Exception:  # pragma: no cover
     pass
 
 
+CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
+
+
 def soup_of(html: str) -> BeautifulSoup:
     return BeautifulSoup(html, "lxml")
 
@@ -441,4 +444,5 @@ def extract_text_units(parsed: dict[str, Any], kind: str) -> list[dict[str, Any]
     elif kind == "product":
         if parsed.get("title"):
             units.append({"kind": "title", "idx": 0, "ja": parsed["title"]})
-    return units
+    # Числа, латиница и пустые строки переводить не нужно.
+    return [unit for unit in units if CJK_RE.search(unit["ja"])]

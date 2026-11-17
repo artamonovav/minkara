@@ -27,7 +27,7 @@ LISTING = """
 """
 
 NOTE = """
-<h1 class="contentsTitle">Заголовок заметки</h1>
+<h1 class="contentsTitle">フリードの整備</h1>
 <p class="user-article-header__date">作業日：2021年5月19日</p>
 <ul class="article-category-contents"><li><a href="/note/?bi=4">外装</a></li></ul>
 <a id="_ctl0_CPH2_HL_UserCar" href="/userid/1/car/2/profile.aspx">моя машина</a>
@@ -38,14 +38,14 @@ NOTE = """
 </table>
 <div class="galleryTitle">1</div>
 <div class="galleryPhoto"><a href="/x/1/note.aspx"><img src="https://cdn.example/p1.jpg"></a></div>
-<div class="galleryMemo">Первый<br/>Второй</div>
+<div class="galleryMemo">オイル交換<br/>フィルター交換</div>
 <div class="galleryTitle">2</div>
 <div class="galleryPhoto"><a href="/x/2/note.aspx"><img src="https://cdn.example/p2.jpg"></a></div>
-<div class="galleryMemo">Третий</div>
+<div class="galleryMemo">エアフィルター交換</div>
 <td>
   <div class="commentTitle"><a href="/userid/9/profile/">Вася</a></div>
   <div class="commentDate">2026年1月1日</div>
-  <div class="commentArea half">Коммент<br/>Ещё</div>
+  <div class="commentArea half">ありがとう<br/>参考になりました</div>
 </td>
 <span id="txtLikeCount_LikeCommentClipForContentHeader">5</span>
 """
@@ -77,17 +77,17 @@ def test_parse_listing_end_marker():
 
 def test_parse_note():
     note = parse.parse_note(NOTE, "https://example/note.aspx")
-    assert note["title"] == "Заголовок заметки"
+    assert note["title"] == "フリードの整備"
     assert note["date"] == "2021年5月19日"
     assert note["work_time"] == "30分以内"
     assert note["difficulty"] == "初級"
     assert note["car_model"] == "ホンダ フリード"
     assert note["likes"] == 5
     assert len(note["gallery"]) == 2
-    assert note["gallery"][0]["memo"] == "Первый\nВторой"
+    assert note["gallery"][0]["memo"] == "オイル交換\nフィルター交換"
     assert note["gallery"][1]["image"] == "https://cdn.example/p2.jpg"
     assert note["comments"][0]["author"] == "Вася"
-    assert "Ещё" in note["comments"][0]["text"]
+    assert "参考" in note["comments"][0]["text"]
 
 
 def test_parse_profile():
