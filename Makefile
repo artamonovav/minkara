@@ -1,10 +1,11 @@
 PY ?= .venv/bin/python
 
-.PHONY: help setup status crawl translate build serve test lint clean
+.PHONY: help setup status report crawl translate build serve test lint clean
 
 help:
 	@echo "make setup      — окружение, зависимости, MCP"
 	@echo "make status     — состояние архива"
+	@echo "make report     — отчёт о покрытии"
 	@echo "make crawl      — полная выкачка"
 	@echo "make translate  — перевод (DeepL + Google + fix-bad)"
 	@echo "make build      — сборка офлайн-сайта"
@@ -17,6 +18,9 @@ setup:
 
 status:
 	$(PY) scripts/status.py
+
+report:
+	$(PY) scripts/report.py
 
 crawl:
 	bash scripts/crawl_all.sh
