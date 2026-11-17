@@ -6,7 +6,7 @@ import re
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 # Параметры, которые влияют на содержимое страницы и должны сохраняться.
-KEEP_PARAMS = {"pn", "bi", "sci", "ci", "mk", "br", "id", "cid"}
+KEEP_PARAMS = {"pn", "bi", "sci", "ci", "mk", "br", "id", "cid", "pt"}
 
 SECTIONS = {"note", "partsreview", "review", "photo", "qa"}
 
@@ -17,6 +17,7 @@ _PARTS_RE = re.compile(r"^/userid/(?P<uid>\d+)/car/(?P<car>\d+)/(?P<note>\d+)/pa
 _CAR_RE = re.compile(r"^/userid/(?P<uid>\d+)/car/(?P<car>\d+)/profile\.aspx$")
 _REVIEW_RE = re.compile(r"^/car/(?P<brand>[^/]+)/(?P<model>[^/]+)/review/detail\.aspx$")
 _QA_RE = re.compile(r"^/car/(?P<brand>[^/]+)/(?P<model>[^/]+)/qa/unit(?P<unit>\d+)/$")
+_PRODUCT_RE = re.compile(r"^(?:/car/[^/]+/[^/]+)?/partsreview/parts\.aspx$")
 
 
 def absolute(base: str, href: str) -> str:
@@ -65,6 +66,11 @@ def classify(url: str) -> dict:
         info["kind"] = "asset"
         return info
 
+    if _PRODUCT_RE.match(path):
+        product_id = dict(parse_qsl(parts.query)).get("pt")
+        if product_id:
+            info.update(kind="product", pt=product_id)
+            return info
     m = _NOTE_RE.match(path)
     if m:
         info.update(kind="note", **m.groupdict())
@@ -115,6 +121,8 @@ def raw_relpath(info: dict) -> str:
         return f"userid/{info['uid']}/car/{info['car']}/{info['note']}/{ext}.html"
     if kind == "car":
         return f"userid/{info['uid']}/car/{info['car']}/profile.html"
+    if kind == "product":
+        return f"partsreview/product-{info['pt']}.html"
     if kind == "review":
         return f"car/{info['brand']}/{info['model']}/review/{info.get('cid')}.html"
     if kind == "qa":

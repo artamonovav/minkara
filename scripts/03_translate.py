@@ -224,7 +224,7 @@ def load_glossary(path: Path) -> dict[str, str]:
 def sync_units(store: Store) -> int:
     """Переносит тексты из meta_json в text_units (идемпотентно)."""
     total = 0
-    for kind in ("note", "parts", "review"):
+    for kind in ("note", "parts", "review", "product"):
         for page in store.parsed_pages(kind):
             meta = json.loads(page["meta_json"])
             for unit in parse.extract_text_units(meta, kind):

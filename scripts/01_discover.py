@@ -42,8 +42,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--sections",
-        default="note",
-        help="разделы через запятую (пока поддержан note; остальные — фазы M3/M4)",
+        help="разделы через запятую (по умолчанию — включённые в config/models.yaml)",
     )
     parser.add_argument("--max-pages", type=int, default=0, help="ограничить число страниц листинга")
     parser.add_argument("--delay", type=float, help="пауза между запросами, сек")
@@ -71,15 +70,22 @@ def main() -> int:
         print("Нет моделей под указанные фильтры. Проверьте config/models.yaml")
         return 1
 
-    total_notes = 0
+    if args.sections:
+        section_names = [s.strip() for s in args.sections.split(",") if s.strip()]
+    else:
+        section_names = [
+            name for name, cfg in sections.items() if (cfg or {}).get("enabled")
+        ]
+
+    total_items = 0
     try:
         for model in models:
-            for section in [s.strip() for s in args.sections.split(",") if s.strip()]:
+            for section in section_names:
                 if section not in sections:
                     print(f"! раздел {section} не описан в config/models.yaml — пропуск")
                     continue
-                if section != "note":
-                    print(f"! {model.key}/{section}: обход каталога будет в фазе M3/M4 — пропуск")
+                if section not in ("note", "partsreview", "review"):
+                    print(f"! {model.key}/{section}: раздел пока не поддержан — пропуск")
                     continue
 
                 print(f"\n== {model.brand}/{model.key}/{section} ==")
@@ -90,7 +96,12 @@ def main() -> int:
                     )
                     info = urls.classify(url)
                     html = fetcher.text(url)
-                    items = parse.parse_listing(html)
+                    if section == "note":
+                        items = parse.parse_listing(html)
+                    elif section == "partsreview":
+                        items = parse.parse_product_listing(html)
+                    else:
+                        items = parse.parse_review_listing(html)
                     rel = save_raw(settings, info, html)
                     store.upsert_page(
                         url,
@@ -107,35 +118,55 @@ def main() -> int:
                         break
 
                     for item in items:
-                        note_url = urls.canonical(urls.absolute(settings.base_url, item["url"]))
-                        note_info = urls.classify(note_url)
-                        if note_info["kind"] != "note":
-                            continue
-                        store.upsert_page(
-                            note_url,
-                            kind="note",
-                            brand=model.brand,
-                            model=model.key,
-                            section="note",
-                            uid=note_info["uid"],
-                            car=note_info["car"],
-                            note=note_info["note"],
-                            title=item["title"],
+                        item_url = urls.canonical(
+                            urls.absolute(settings.base_url, item["url"])
                         )
-                        if int(note_info["car"]) == 0:
-                            # Заметка не привязана к конкретной машине —
-                            # профиль качать некуда, поколение останется неизвестным.
-                            continue
-                        store.upsert_car(
-                            int(note_info["car"]),
-                            url=profile_url(settings, int(note_info["uid"]), int(note_info["car"])),
-                            uid=int(note_info["uid"]),
-                            brand=model.brand,
-                            model=model.key,
-                            state="new",
-                        )
-                    total_notes += len(items)
-                    print(f"  стр. {page_no}: +{len(items)} (всего {total_notes})")
+                        item_info = urls.classify(item_url)
+                        if section == "note" and item_info["kind"] == "note":
+                            store.upsert_page(
+                                item_url,
+                                kind="note",
+                                brand=model.brand,
+                                model=model.key,
+                                section="note",
+                                uid=item_info["uid"],
+                                car=item_info["car"],
+                                note=item_info["note"],
+                                title=item["title"],
+                            )
+                            if int(item_info["car"]) == 0:
+                                # Заметка не привязана к машине — профиль качать некуда.
+                                continue
+                            store.upsert_car(
+                                int(item_info["car"]),
+                                url=profile_url(
+                                    settings, int(item_info["uid"]), int(item_info["car"])
+                                ),
+                                uid=int(item_info["uid"]),
+                                brand=model.brand,
+                                model=model.key,
+                                state="new",
+                            )
+                        elif section == "partsreview" and item_info["kind"] == "product":
+                            store.upsert_page(
+                                item_url,
+                                kind="product",
+                                brand=model.brand,
+                                model=model.key,
+                                section="partsreview",
+                                title=item["title"],
+                            )
+                        elif section == "review" and item_info["kind"] == "review":
+                            store.upsert_page(
+                                item_url,
+                                kind="review",
+                                brand=model.brand,
+                                model=model.key,
+                                section="review",
+                                title=item["title"],
+                            )
+                    total_items += len(items)
+                    print(f"  стр. {page_no}: +{len(items)} (всего {total_items})")
                     page_no += 1
                     if args.max_pages and page_no > args.max_pages:
                         print(f"  остановка по --max-pages={args.max_pages}")
@@ -151,7 +182,7 @@ def main() -> int:
     print("\nГотово.")
     print(f"  страниц всего: {stats['pages']} ({stats['pages_by_kind']})")
     print(f"  машин в очереди: {stats['cars']}")
-    print(f"  заметок найдено за запуск: {total_notes}")
+    print(f"  элементов найдено за запуск: {total_items}")
     return 0
 
 

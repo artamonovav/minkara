@@ -198,11 +198,17 @@ def parse_parts(html: str, url: str = "") -> dict[str, Any]:
     memo_el = soup.select_one(".userCarPhotoMemo")
     photo_el = soup.select_one("#UserCarPhoto img")
     rows = _table_rows(soup)
+    author = ""
+    for link in soup.select('a[href*="/profile/"]'):
+        text = _text(link)
+        if text and text not in ("プロフィール", "プロフィールを見る"):
+            author = text
     return {
         "url": url,
         "title": _text(title_el),
         "date": _text(date_el),
         "score": _text(score_el),
+        "author": author,
         "text": _text_br(memo_el),
         "image": (photo_el.get("src") if photo_el else None),
         "categories": [_text(a) for a in soup.select("ul.article-category-contents a")],
@@ -211,26 +217,191 @@ def parse_parts(html: str, url: str = "") -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
-# Отзыв об автомобиле (review/detail.aspx)
+# Каталог обзоров запчастей: список товаров -> товар -> отзывы
 # --------------------------------------------------------------------------
+
+
+def _split_rating(value: str) -> tuple[str, int | None]:
+    """'4.43 （7 件）' -> ('4.43', 7)."""
+    score = ""
+    match = re.search(r"\d+(?:\.\d+)?", value or "")
+    if match:
+        score = match.group(0)
+    count = None
+    count_match = re.search(r"[（(]\s*(\d+)\s*件", value or "")
+    if count_match:
+        count = int(count_match.group(1))
+    return score, count
+
+
+def parse_product_listing(html: str) -> list[dict[str, Any]]:
+    soup = soup_of(html)
+    items: list[dict[str, Any]] = []
+    for li in soup.select("li.item-common"):
+        link = li.select_one('a[id$="_HyperLink_PartsName"]') or li.select_one(
+            'a[id$="_HyperLink_PartsImage"]'
+        )
+        if link is None or not link.get("href"):
+            continue
+        rows = _table_rows(li)
+        score, reviews = _split_rating(rows.get("評価", ""))
+        image_el = li.select_one("img.parts_image")
+        image = None
+        if image_el is not None:
+            image = image_el.get("data-original") or image_el.get("src")
+            if image and "loading.gif" in image:
+                image = image_el.get("data-original")
+        latest = li.select_one("a.contents-bottom")
+        items.append(
+            {
+                "url": link["href"],
+                "title": _text(link),
+                "image": image,
+                "score": score,
+                "reviews": reviews,
+                "price": rows.get("購入価格"),
+                "maker": rows.get("メーカー"),
+                "brand": rows.get("ブランド"),
+                "series": rows.get("シリーズ"),
+                "categories": [_text(li_) for li_ in li.select("ol.categorytext li")],
+                "latest_review": (latest.get("href") if latest else None),
+            }
+        )
+    return items
+
+
+def parse_product(html: str, url: str = "") -> dict[str, Any]:
+    soup = soup_of(html)
+    headings = [text for text in (_text(h) for h in soup.select("h1")) if text]
+    title = headings[-1] if headings else ""
+    title = re.sub(r"の評価・評判・口コミ$", "", title).strip()
+    rating_el = soup.select_one(".parts-data__review-star-point")
+    header_el = soup.select_one("#reviewlist")
+    review_links: list[str] = []
+    for link in soup.select('a[href*="/parts.aspx"]'):
+        href = link.get("href") or ""
+        if re.match(r"^/userid/\d+/car/\d+/\d+/parts\.aspx$", href):
+            if href not in review_links:
+                review_links.append(href)
+    return {
+        "url": url,
+        "title": title,
+        "rating": _text(rating_el),
+        "reviews_header": _text(header_el),
+        "reviews": review_links,
+        "categories": [_text(a) for a in soup.select("ol.categorytext li")],
+    }
+
+
+# --------------------------------------------------------------------------
+# Отзывы об автомобиле (クルマレビュー)
+# --------------------------------------------------------------------------
+
+
+def parse_review_listing(html: str) -> list[dict[str, Any]]:
+    soup = soup_of(html)
+    items: list[dict[str, Any]] = []
+    containers = soup.select("ul.review-carpage-list > li") or soup.select(
+        "div.kr_reviewbox"
+    )
+    for container in containers:
+        box = container.select_one("div.kr_reviewbox") or container
+        link = container.select_one("h2.kr_ttltxt a")
+        if link is None:
+            for candidate in container.select('a[href*="review/detail.aspx"]'):
+                text = _text(candidate)
+                if text and text != "もっと見る":
+                    link = candidate
+                    break
+        if link is None:
+            continue
+        grade_el = box.select_one(".kr_reviewGrade")
+        model_el = box.select_one(".kr_reviewModel")
+        model = _text(model_el)
+        grade = _text(grade_el)
+        if grade and model.endswith(grade):
+            model = model[: -len(grade)].strip()
+        date = ""
+        for li in box.select("li"):
+            if "レビュー日" in _text(li):
+                date_el = li.select_one(".kr_reviewDaysize")
+                date = _text(date_el) or _text(li).replace("レビュー日：", "").strip()
+                break
+        image = None
+        for img in box.select("img"):
+            src = img.get("src") or ""
+            if "cdn.snsimg" in src and "/User/" not in src:
+                image = src
+                break
+        items.append(
+            {
+                "url": link["href"],
+                "title": _text(link),
+                "author": _text(box.select_one(".user-name a")),
+                "model": model,
+                "grade": grade,
+                "date": date,
+                "score": _text(box.select_one(".kr_reviewStar__title")),
+                "image": image,
+            }
+        )
+    return items
 
 
 def parse_review(html: str, url: str = "") -> dict[str, Any]:
     soup = soup_of(html)
-    box = soup.select_one(".kr_reviewbox") or soup.select_one("main")
-    title_el = soup.select_one("h1")
-    score_el = soup.select_one(".kr_reviewStar__title, .kr_reviewStar")
-    body_parts = []
-    if box is not None:
-        for paragraph in box.select("p"):
-            text = _text(paragraph)
-            if len(text) > 20:
-                body_parts.append(text)
+    box = soup.select_one("div.kr_reviewbox") or soup
+    title = re.split(r"\s+-\s+", _text(soup.select_one("h1")), maxsplit=1)[0].strip()
+    model = _text(box.select_one(".kr_reviewModel"))
+    grade = _text(box.select_one(".kr_reviewGrade"))
+    if grade and model.endswith(grade):
+        model = model[: -len(grade)].strip()
+
+    date = ""
+    for li in box.select("li"):
+        if "レビュー日" in _text(li):
+            date = _text(li).replace("レビュー日：", "").strip()
+            break
+
+    aspects: dict[str, str] = {}
+    for item in box.select(".detail-value__item"):
+        name = _text(item.select_one(".detail-value__item-name"))
+        num = _text(item.select_one(".detail-value__num"))
+        if name:
+            aspects[name] = num
+
+    sections: dict[str, str] = {}
+    for title_el in box.select("dt.review-data__title"):
+        body = title_el.find_next_sibling("dd")
+        key = _text(title_el)
+        if key:
+            sections[key] = _text_br(body)
+
+    related = ""
+    for dt in box.select("dt"):
+        if "関連情報URL" in _text(dt):
+            related = _text(dt.find_next_sibling("dd"))
+            break
+
+    images: list[str] = []
+    for img in box.select("img"):
+        src = img.get("src") or ""
+        if "cdn.snsimg" in src and "/User/" not in src and src not in images:
+            images.append(src)
+
     return {
         "url": url,
-        "title": _text(title_el),
-        "score": _text(score_el),
-        "text": "\n\n".join(dict.fromkeys(body_parts)),
+        "title": title,
+        "author": _text(box.select_one(".user-name a")),
+        "model": model,
+        "grade": grade,
+        "date": date,
+        "score": _text(box.select_one(".kr_reviewStar__title")),
+        "aspects": aspects,
+        "sections": sections,
+        "related_url": related,
+        "images": images,
+        "text": "\n\n".join(value for value in sections.values() if value),
     }
 
 
@@ -262,6 +433,12 @@ def extract_text_units(parsed: dict[str, Any], kind: str) -> list[dict[str, Any]
     elif kind == "review":
         if parsed.get("title"):
             units.append({"kind": "title", "idx": 0, "ja": parsed["title"]})
-        if parsed.get("text"):
-            units.append({"kind": "review", "idx": 1, "ja": parsed["text"]})
+        idx = 1
+        for value in (parsed.get("sections") or {}).values():
+            if value:
+                units.append({"kind": "review", "idx": idx, "ja": value})
+                idx += 1
+    elif kind == "product":
+        if parsed.get("title"):
+            units.append({"kind": "title", "idx": 0, "ja": parsed["title"]})
     return units

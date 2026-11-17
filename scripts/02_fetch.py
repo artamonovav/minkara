@@ -31,6 +31,7 @@ PARSERS = {
     "note": parse.parse_note,
     "parts": parse.parse_parts,
     "review": parse.parse_review,
+    "product": parse.parse_product,
     "car": parse.parse_profile,
 }
 
@@ -54,6 +55,7 @@ def register_assets(store: Store, settings, page_url: str, parsed: dict, with_th
             images.append(item["image"])
     if parsed.get("image"):
         images.append(parsed["image"])
+    images.extend(parsed.get("images") or [])
     for src in images:
         if not src:
             continue
@@ -115,6 +117,7 @@ def fetch_pages(
     store: Store,
     settings,
     fetcher: Fetcher,
+    rules: dict,
     kinds: list[str],
     limit: int | None,
     with_thumbs: bool,
@@ -132,17 +135,40 @@ def fetch_pages(
         info = urls.classify(url)
         rel = save_raw(settings, info, html)
         parsed = parse_page(kind, html, url)
+        generation = page["generation"]
+        if generation is None and kind == "review" and parsed.get("grade"):
+            generation = generation_for(
+                rules, page["brand"], page["model"], None, parsed.get("grade")
+            )
         store.set_page(
             page["id"],
             state="parsed",
             http_code=200,
             file=rel,
             title=parsed.get("title") or page["title"],
+            generation=generation,
             meta_json=json.dumps(parsed, ensure_ascii=False),
             fetched_at=now(),
             error=None,
         )
         register_assets(store, settings, url, parsed, with_thumbs)
+        if kind == "product":
+            # Страница товара содержит ссылки на отзывы — регистрируем их.
+            for href in (parsed.get("reviews") or []):
+                review_url = urls.canonical(urls.absolute(settings.base_url, href))
+                review_info = urls.classify(review_url)
+                if review_info["kind"] != "parts":
+                    continue
+                store.upsert_page(
+                    review_url,
+                    kind="parts",
+                    brand=page["brand"],
+                    model=page["model"],
+                    section="partsreview",
+                    uid=review_info["uid"],
+                    car=review_info["car"],
+                    note=review_info["note"],
+                )
         done += 1
         print(f"  {kind} {page['id']}: {parsed.get('title') or url}")
     return done
@@ -199,8 +225,11 @@ def main() -> int:
     parser.add_argument("--assets-limit", type=int, default=0, help="сколько медиа скачать")
     parser.add_argument(
         "--kind",
-        default="note,parts,review,qa,model",
+        default="note,product,parts,review,qa,model",
         help="типы страниц через запятую",
+    )
+    parser.add_argument(
+        "--only-assets", action="store_true", help="только докачать медиа, без страниц"
     )
     parser.add_argument("--no-assets", action="store_true", help="не скачивать медиа")
     parser.add_argument("--with-thumbs", action="store_true", help="качать и миниатюры")
@@ -231,11 +260,14 @@ def main() -> int:
     kinds = [k.strip() for k in args.kind.split(",") if k.strip()]
 
     try:
-        print("== профили машин ==")
-        cars = fetch_cars(store, settings, fetcher, rules, cars_limit)
-        print("== страницы ==")
-        pages = fetch_pages(store, settings, fetcher, kinds, limit, args.with_thumbs)
-        assets = 0
+        cars = pages = assets = 0
+        if not args.only_assets:
+            print("== профили машин ==")
+            cars = fetch_cars(store, settings, fetcher, rules, cars_limit)
+            print("== страницы ==")
+            pages = fetch_pages(
+                store, settings, fetcher, rules, kinds, limit, args.with_thumbs
+            )
         if not args.no_assets:
             print("== медиа ==")
             assets = fetch_assets(store, settings, fetcher, assets_limit)
