@@ -68,7 +68,8 @@ footer { color:var(--muted); font-size:.85rem; padding:30px 20px; text-align:cen
 
 INDEX_JS = """
 const KIND_LABELS = __KIND_LABELS__;
-const state = { q: "", model: "", gen: "", kind: "" };
+const PAGE = 100;
+const state = { q: "", model: "", gen: "", kind: "", limit: PAGE };
 const $ = (id) => document.getElementById(id);
 function render() {
   const list = window.MINKARA_INDEX || [];
@@ -80,8 +81,10 @@ function render() {
     if (!q) return true;
     return (it.x || "").toLowerCase().includes(q);
   });
-  $("count").textContent = items.length + " из " + list.length;
-  $("list").innerHTML = items.map((it) => {
+  const shown = items.slice(0, state.limit);
+  $("count").textContent = "показано " + shown.length + " из " + items.length;
+  $("more").style.display = items.length > state.limit ? "inline-block" : "none";
+  $("list").innerHTML = shown.map((it) => {
     const title = it.tr || it.tj || "(без названия)";
     const sub = it.tr && it.tj ? '<div class="ja">' + escapeHtml(it.tj) + "</div>" : "";
     const meta = [it.d, it.c, it.mn, it.g ? "поколение " + it.g : ""]
@@ -102,10 +105,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const models = [...new Set(list.map((it) => it.m).filter(Boolean))].sort();
   $("model").innerHTML = '<option value="">Все модели</option>' +
     models.map((m) => '<option value="' + m + '">' + escapeHtml(m) + "</option>").join("");
-  $("q").addEventListener("input", (e) => { state.q = e.target.value; render(); });
-  $("model").addEventListener("change", (e) => { state.model = e.target.value; render(); });
-  $("gen").addEventListener("change", (e) => { state.gen = e.target.value; render(); });
-  $("kind").addEventListener("change", (e) => { state.kind = e.target.value; render(); });
+  const reset = () => { state.limit = PAGE; render(); };
+  $("q").addEventListener("input", (e) => { state.q = e.target.value; reset(); });
+  $("model").addEventListener("change", (e) => { state.model = e.target.value; reset(); });
+  $("gen").addEventListener("change", (e) => { state.gen = e.target.value; reset(); });
+  $("kind").addEventListener("change", (e) => { state.kind = e.target.value; reset(); });
+  $("more").addEventListener("click", () => { state.limit += PAGE; render(); });
   render();
 });
 """
@@ -478,7 +483,11 @@ def render_index(entries: list[dict]) -> str:
         "<option value='1'>1-е</option><option value='2'>2-е</option>"
         "<option value='3'>3-е</option></select>"
         "</div><div class='meta'><span id='count'></span></div>"
-        "<div id='list'></div></div>"
+        "<div id='list'></div>"
+        "<div style='text-align:center;margin:16px 0'>"
+        "<button id='more' style='padding:8px 16px;border:1px solid #d1d5db;"
+        "border-radius:8px;background:#fff;cursor:pointer'>Показать ещё</button>"
+        "</div></div>"
         "<footer>Личный офлайн-архив. Контент принадлежит авторам и Carview.</footer>"
         "<script src='search-index.js'></script><script>"
         + INDEX_JS.replace("__KIND_LABELS__", KIND_LABELS_JS)
