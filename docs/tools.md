@@ -1,189 +1,175 @@
 # Инструменты и MCP
 
-Список того, что предлагается поставить для работы над архивом. Разделён на
-«нужно сейчас», «понадобится позже» и «не нужно / отклонено».
+Что установлено/предлагается для работы над архивом. Установка
+автоматизирована: `bash scripts/setup.sh` (рут не нужен; если чего-то не
+хватает — скрипт подскажет команду).
 
 ---
 
-## 1. Нужно сейчас (минимальный набор)
+## 1. Уже ставится скриптом setup.sh
 
-### uv — окружение и зависимости
-
-Быстрый менеджер Python-проектов: сам создаёт venv, ставит зависимости,
-фиксирует версии, умеет запускать скрипты и инструменты (`uv run`, `uvx`).
-Кроссплатформенный.
-
-```bash
-# Linux / macOS
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Windows (PowerShell)
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-Зачем: воспроизводимое окружение, `uv run scripts/01_discover.py`,
-`uvx` для MCP-серверов без глобальной установки.
-
-### ruff — линтер и форматтер
+| Инструмент | Зачем |
+|---|---|
+| `uv` | окружение, `uv run`, `uvx` для MCP |
+| `ruff` | линт и формат |
+| `pytest` | тесты парсеров на фикстурах |
+| `sqlite-utils` | быстрая инспекция БД из консоли |
+| `jq` | разбор JSON (если нет — скрипт подскажет `apt install jq`) |
 
 ```bash
-uv tool install ruff
-# или как dev-зависимость проекта:
-uv add --dev ruff
+bash scripts/setup.sh
 ```
 
-Зачем: единый стиль, раннее ловит ошибки (неиспользуемые импорты, баги в
-f-строках), быстрый.
-
-### pytest — тесты парсеров
-
-```bash
-uv add --dev pytest
-```
-
-Зачем: вёрстка minkara меняется; тесты на сохранённых фикстурах позволяют
-править парсеры без походов в сеть.
-
-### sqlite-utils (или sqlite3 CLI)
-
-```bash
-uv tool install sqlite-utils
-# либо системный пакет: apt install sqlite3
-```
-
-Зачем: смотреть состояние БД, строить быстрые отчёты
-(`sqlite-utils rows data/archive.sqlite pages --csv`), не писать скрипты
-ради каждого запроса.
-
-### jq
-
-```bash
-apt install jq        # Debian/Ubuntu
-brew install jq       # macOS
-```
-
-Зачем: разбор JSON-ответов API перевода и отладочных выгрузок.
+Скрипт создаёт `.venv`, ставит зависимости, копирует
+`config/settings.example.env` в `settings.local.env`, настраивает MCP и
+проверяет доступ к minkara (200/403).
 
 ---
 
-## 2. MCP-серверы
+## 2. MCP-серверы (OpenCode V2)
 
-MCP подключается в конфиг OpenCode (`opencode.json` в корне проекта или
-глобальный). Ниже — рекомендуемый минимум.
+Конфигурация — `opencode.json`, ключ `mcp.servers`. Настраивается скриптом:
 
-### sqlite — главный
+```bash
+python3 scripts/setup_mcp.py
+opencode mcp list
+```
 
-Даёт агенту прямой доступ к `data/archive.sqlite`: схема, выборки, отчёты.
+Скрипт идемпотентен: добавляет недостающие серверы, обновляет изменившиеся,
+не трогает остальные ключи конфига.
 
-```json
+### sqlite — DBHub
+
+Даёт агенту SQL-доступ к `data/archive.sqlite` (инструменты `execute_sql`,
+`search_objects`).
+
+```jsonc
 {
   "mcp": {
-    "sqlite": {
-      "type": "local",
-      "command": ["uvx", "mcp-server-sqlite", "--db-path", "data/archive.sqlite"],
-      "enabled": true
+    "servers": {
+      "sqlite": {
+        "type": "local",
+        "command": ["npx", "-y", "@bytebase/dbhub@1.7.1",
+                    "--transport", "stdio",
+                    "--dsn", "sqlite:////home/anatoly/prj/minkara/data/archive.sqlite"],
+        "cwd": "/home/anatoly/prj/minkara"
+      }
     }
   }
 }
 ```
 
-Зачем: на этапе разработки быстро отвечать на вопросы «сколько заметок
-скачано», «какие поколения не определились», «сколько текстов без перевода».
+> Почему не `mcp-server-sqlite`: пакет устарел и падает с
+> `AttributeError: 'Server' object has no attribute 'list_resources'` на
+> актуальном Python-SDK MCP. Пиннинг старых версий SDK упирается в
+> несовместимость с pydantic. DBHub — поддерживаемый сервер, проверен
+> handshake'ом и реальным запросом к архиву.
 
-### fetch — проверка страниц
+### fetch — точечные запросы
 
-```json
+```jsonc
 {
   "mcp": {
-    "fetch": {
-      "type": "local",
-      "command": ["uvx", "mcp-server-fetch"],
-      "enabled": true
+    "servers": {
+      "fetch": {
+        "type": "local",
+        "command": ["uvx", "mcp-server-fetch"],
+        "cwd": "/home/anatoly/prj/minkara"
+      }
     }
   }
 }
 ```
 
-Зачем: точечно смотреть страницы/редиректы, не добавляя одноразовые curl.
+### filesystem — доступ к проекту
 
-### filesystem — доступ к данным и результату
-
-```json
+```jsonc
 {
   "mcp": {
-    "filesystem": {
-      "type": "local",
-      "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem",
-                  "/home/anatoly/prj/minkara"],
-      "enabled": true
+    "servers": {
+      "filesystem": {
+        "type": "local",
+        "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem",
+                    "/home/anatoly/prj/minkara"],
+        "cwd": "/home/anatoly/prj/minkara"
+      }
     }
   }
 }
 ```
-
-Зачем: агенту нужен доступ к `data/` и `out/` (вне git, но в проекте).
 
 ### git — история и коммиты
 
-```json
+```jsonc
 {
   "mcp": {
-    "git": {
-      "type": "local",
-      "command": ["uvx", "mcp-server-git", "--repository",
-                  "/home/anatoly/prj/minkara"],
-      "enabled": true
+    "servers": {
+      "git": {
+        "type": "local",
+        "command": ["uvx", "mcp-server-git", "--repository",
+                    "/home/anatoly/prj/minkara"],
+        "cwd": "/home/anatoly/prj/minkara"
+      }
     }
   }
 }
 ```
 
-Зачем: осмысленные коммиты по этапам, просмотр диффов.
+### Отключение сервера
+
+В V2 нет поля `enabled`; чтобы оставить сервер в конфиге, но не подключать —
+`"disabled": true`.
 
 ---
 
 ## 3. Понадобится позже
 
-### Ollama — локальный перевод (опционально)
-
-Если решим переводить локально, без API и оплаты.
+### Ollama — локальный перевод
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull qwen2.5:14b-instruct   # или gemma3:12b, mistral-nemo
 ```
 
-Требования: 16+ ГБ RAM (14B в Q4), лучше GPU. Плюсы: офлайн, бесплатно,
-данные не уходят. Минусы: качество и скорость ниже топовых API; японский
-технический текст требует аккуратного промпта и глоссария.
+16+ ГБ RAM (14B в Q4), лучше GPU. Плюсы: офлайн, бесплатно. Минусы: качество
+и скорость ниже топовых API; японский технический текст требует глоссария.
 
-Альтернатива — любой OpenAI-совместимый API (см. `MINKARA_TRANSLATE_*`).
+Провайдер уже поддержан: `MINKARA_TRANSLATE_PROVIDER=ollama`.
 
-### ImageMagick — миниатюры и нормализация фото
+### Google Translate
+
+* `--provider google` — бесплатный веб-эндпоинт (без ключа, без SLA);
+* `--provider google_cloud` — официальный API, нужен ключ
+  (`MINKARA_TRANSLATE_API_KEY`).
+
+### OpenAI-совместимый API
+
+`--provider openai` + `MINKARA_TRANSLATE_BASE_URL`, `MINKARA_TRANSLATE_API_KEY`,
+`MINKARA_TRANSLATE_MODEL`.
+
+### ImageMagick — превью и пережатие
 
 ```bash
-apt install imagemagick
+sudo apt install imagemagick
 ```
-
-Зачем: если понадобятся превью для каталога или пережатие больших фото.
 
 ### Playwright MCP — только если появится JS-рендеринг
 
-```json
+Сейчас не нужен: страницы отдаются серверным HTML. Держим как резерв:
+
+```jsonc
 {
   "mcp": {
-    "playwright": {
-      "type": "local",
-      "command": ["npx", "@playwright/mcp@latest"],
-      "enabled": false
+    "servers": {
+      "playwright": {
+        "type": "local",
+        "command": ["npx", "@playwright/mcp@latest"],
+        "disabled": true
+      }
     }
   }
 }
 ```
-
-Сейчас **не нужен**: страницы minkara отдаются серверным HTML, контент
-доступен без исполнения JS. Держим как резерв, если сайт переедет на
-клиентский рендеринг.
 
 ---
 
@@ -192,22 +178,20 @@ apt install imagemagick
 | Инструмент | Почему нет |
 |---|---|
 | `wget --mirror` / `httrack` | тянут весь сайт, ломают структуру, не умеют ждать `?pn=` и фильтровать по поколению; нет БД и инкрементальности |
-| `monolith` / SingleFile | годятся для разовой страницы, но не для 2000+ с переводами и поиском |
-| Electron/Tauri-приложение | требует сборки/установки под каждую ОС; статический сайт решает задачу без софта |
-| Отдельный сервер (Flask/FastAPI) как обязательный | лишняя зависимость; оставляем опциональный `serve.py` на stdlib |
+| `monolith` / SingleFile | годятся для разовой страницы, но не для тысяч страниц с переводами и поиском |
+| Electron/Tauri | требует сборки/установки под каждую ОС; статический сайт решает задачу без софта |
+| Обязательный сервер (Flask/FastAPI) | лишняя зависимость; есть опциональный `serve.py` на stdlib |
 
 ---
 
-## 5. Проверка окружения
+## 5. Проверка
 
 ```bash
 uv --version
-ruff --version
-pytest --version
-sqlite-utils --version
-jq --version
+.venv/bin/ruff --version
+.venv/bin/pytest --version
+.venv/bin/sqlite-utils --version
+opencode mcp list
 ```
 
-Если чего-то нет — команды установки выше. Проект должен запускаться и без
-`uv` (системный Python 3.12 + `pip install -r requirements.txt`), но с `uv`
-воспроизводимее.
+Ожидаемо: `fetch`, `filesystem`, `git`, `sqlite` — `connected`.

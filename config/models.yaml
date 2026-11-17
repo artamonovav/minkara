@@ -5,7 +5,7 @@
 #
 # generations — какие поколения включать (пустой список = все).
 # Поколение определяется по коду кузова (型式) из профиля машины,
-# см. config/generations.yaml.
+# см. config/generations.yaml. Сейчас собираем все годы Freed.
 
 brands:
   honda:
@@ -13,17 +13,16 @@ brands:
     models:
       - key: freed
         name: Honda Freed
-        generations: [2, 3]
+        generations: []
       - key: freed_hybrid
         name: Honda Freed Hybrid
-        generations: [2, 3]
+        generations: []
       - key: freed_plus
         name: Honda Freed Plus
-        generations: [2, 3]
+        generations: []
       - key: freed_plus_hybrid
         name: Honda Freed Plus Hybrid
-        generations: [2, 3]
-      # Только 1-е поколение — оставлено для полноты, по умолчанию не берём.
+        generations: []
       - key: freed_spike
         name: Honda Freed Spike
         generations: []

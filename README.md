@@ -1,8 +1,9 @@
 # Minkara Freed Archive
 
 Офлайн-архив страниц сайта [minkara.carview.co.jp](https://minkara.carview.co.jp)
-по Honda Freed (整備手帳 / заметки по ремонту и DIY) с последующим переводом
-текста на русский язык и сборкой локального сайта с поиском.
+по **всем моделям Honda Freed** (все поколения и годы): заметки по ремонту и
+DIY (整備手帳), обзоры запчастей, отзывы владельцев. Тексты переводятся на
+русский, результат собирается в локальный статический сайт с поиском.
 
 ## Зачем
 
@@ -37,11 +38,15 @@ Yahoo! JAPAN). Заголовки (`Accept-Language` и пр.) больше не
 │   ├── parse.py               # парсеры страниц
 │   └── db.py                  # SQLite-хранилище
 ├── scripts/                   # CLI-этапы пайплайна
+│   ├── 00_models.py           # автообнаружение моделей марки по подстроке
 │   ├── 01_discover.py         # обход списков -> таблица URL
 │   ├── 02_fetch.py            # скачивание страниц и картинок
 │   ├── 03_translate.py        # перевод текстов на русский
 │   ├── 04_build.py            # сборка офлайн-сайта с поиском
-│   └── serve.py               # локальный просмотр
+│   ├── serve.py               # локальный просмотр (опционально)
+│   ├── setup.sh               # установка окружения и MCP
+│   └── setup_mcp.py           # настройка mcp.servers в opencode.json
+├── view.sh / view.command / view.bat   # открыть архив в браузере
 ├── data/                      # [gitignored] сырьё и БД
 ├── out/                       # [gitignored] готовый офлайн-сайт
 └── work/                      # [gitignored] временное
@@ -54,20 +59,28 @@ Yahoo! JAPAN). Заголовки (`Accept-Language` и пр.) больше не
 ## Установка
 
 ```bash
+bash scripts/setup.sh
+```
+
+Скрипт поставит `uv`, создаст `.venv`, установит зависимости и инструменты
+(`ruff`, `pytest`, `sqlite-utils`), настроит MCP и проверит доступ к сайту.
+Рут не нужен.
+
+Вручную (без `uv`):
+
+```bash
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
-cp config/settings.example.env config/settings.local.env   # при необходимости
+cp config/settings.example.env config/settings.local.env
 ```
-
-Зависимости можно не ставить в venv — достаточно `requests`, `beautifulsoup4`,
-`lxml`, `PyYAML` в системе.
 
 ## Быстрый старт
 
 ```bash
-# 1. Собрать список URL (листинги + профили машин для определения поколения)
-python3 scripts/01_discover.py --brand honda --models freed,freed_hybrid
+# 1. Собрать список URL по всем моделям со словом Freed
+#    (листинги + профили машин; поколение — только метаданные)
+python3 scripts/01_discover.py --brand honda --match freed
 
 # 2. Скачать страницы и картинки (можно прерывать и запускать снова)
 python3 scripts/02_fetch.py --limit 50

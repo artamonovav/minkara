@@ -75,12 +75,17 @@ data/ out/ work/  runtime-каталоги, в git не попадают
 
 ## Поток данных
 
-1. `01_discover` читает листинги, пишет `pages` (kind=listing/note).
-2. `02_fetch` берёт `pages` со `state=new`, сохраняет HTML в `data/raw`,
-   парсит, складывает метаданные в `meta_json`, регистрирует картинки в
-   `assets`; затем качает `assets` со `state=new`.
-3. `03_translate` наполняет `text_units` из `meta_json` и переводит те, у
-   которых пусто `ru`.
+0. `00_models` (опционально) сканирует страницу модели и находит все ключи
+   моделей марки по подстроке; результат можно записать в
+   `config/models.discovered.yaml` (подмешивается к `models.yaml`).
+1. `01_discover` читает листинги, пишет `pages` (kind=listing/note) и
+   регистрирует профили машин в `cars`.
+2. `02_fetch` берёт `pages`/`cars` со `state=new`, сохраняет HTML в
+   `data/raw`, парсит, складывает метаданные в `meta_json`, определяет
+   поколение (код 型式 или подсказка по комплектации), регистрирует картинки
+   в `assets`; затем качает `assets` со `state=new`.
+3. `03_translate` синхронизирует `text_units` из `meta_json` и переводит те,
+   у которых пусто `ru` (кэш по хэшу).
 4. `04_build` читает `pages`/`text_units` и генерирует `out/site`.
 
 ## Ошибки и повторные запуски

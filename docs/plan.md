@@ -136,11 +136,13 @@
 ### 3.1 Стартовый охват
 
 * Марка: Honda.
-* Модели: `freed`, `freed_hybrid`, `freed_plus`, `freed_plus_hybrid`
-  (2-е поколение), плюс 3-е поколение в тех же моделях по коду `GT*`.
-* Поколения: **2 и 3** (`enabled_generations: [2, 3]`).
-* `freed_spike`, `freed_spike_hybrid` — только 1-е поколение, исключаются
-  (но остаются в конфиге, чтобы включить одной строкой).
+* Модели: **все, содержащие `freed`** — `freed`, `freed_hybrid`, `freed_plus`,
+  `freed_plus_hybrid`, `freed_spike`, `freed_spike_hybrid`. Список проверен
+  по странице модели и автообнаружением (`00_models.py --match freed`).
+* Поколения/годы: **все** (`generations: []`). Поколение определяется по
+  коду кузова (型式), при его отсутствии — по названию комплектации
+  (`grade_hints`), и остаётся **метаданными** для фильтров и отчётов.
+  Заметки с неизвестным поколением всё равно собираются.
 * Темы: **все** категории заметок — ремонт, тюнинг/украшения, обзоры,
   расходники и т.д. Фильтра по категориям нет.
 
@@ -425,29 +427,31 @@ honda:
 ### M0. Каркас (сделано)
 
 - [x] Структура репозитория, `.gitignore`, README, requirements.
-- [x] Конфиги: модели, поколения, шаблон env.
-- [x] Документация: план, архитектура.
+- [x] Конфиги: модели (все Freed), поколения, глоссарий, шаблон env.
+- [x] Документация: план, архитектура, инструменты.
+- [x] `scripts/setup.sh` + `setup_mcp.py` (uv, venv, ruff/pytest/sqlite-utils, MCP).
 
-### M1. Ядро: заметки Freed 2–3 поколения
+### M1. Ядро: все заметки всех моделей Freed (сделано)
 
-- [ ] `src/minkara/config.py` — generic-загрузка марок/моделей/поколений.
-- [ ] `src/minkara/urls.py` — канонизация, классификация, раскладка файлов.
-- [ ] `src/minkara/http.py` — rate limit, retries, `403`-детект.
-- [ ] `src/minkara/parse.py` — `parse_listing`, `parse_note`, `parse_profile`,
-      `extract_text_units`.
-- [ ] `src/minkara/db.py` — схема, `Store`.
-- [ ] `scripts/01_discover.py` — обход листингов + регистрация машин.
-- [ ] `scripts/02_fetch.py` — страницы + профили + картинки.
-- [ ] Тесты парсеров на фикстурах (pytest).
-- [ ] Прогон: discovery → fetch на одной модели, сверка счётчиков.
+- [x] `src/minkara/config.py` — generic-загрузка марок/моделей/поколений,
+      fallback по комплектации.
+- [x] `src/minkara/urls.py` — канонизация, классификация, раскладка файлов.
+- [x] `src/minkara/http.py` — rate limit, retries, `403`-детект.
+- [x] `src/minkara/parse.py` — `parse_listing`, `parse_note`, `parse_profile`,
+      `parse_parts`, `parse_review`, `extract_text_units`.
+- [x] `src/minkara/db.py` — схема, `Store`.
+- [x] `scripts/00_models.py` — автообнаружение моделей по подстроке.
+- [x] `scripts/01_discover.py` — обход листингов + регистрация машин.
+- [x] `scripts/02_fetch.py` — страницы + профили + картинки.
+- [x] Тесты (11) на фикстурах, ruff чистый.
+- [x] Сквозной прогон: discover → fetch → translate → build.
 
-### M2. Перевод и просмотр
+### M2. Перевод и просмотр (сделано)
 
-- [ ] `scripts/03_translate.py` (echo + openai/ollama).
-- [ ] `scripts/04_build.py` — страницы + индекс + поиск.
-- [ ] `view.sh` / `view.command` / `view.bat`.
-- [ ] Проверка на Linux/Windows/macOS (file://).
-- [ ] `scripts/serve.py`.
+- [x] `scripts/03_translate.py` (echo/google/google_cloud/openai/ollama).
+- [x] `scripts/04_build.py` — страницы + индекс + поиск.
+- [x] `view.sh` / `view.command` / `view.bat`, `serve.py`.
+- [ ] Проверка на Windows/macOS (на Linux проверено).
 
 ### M3. Обзоры запчастей
 
@@ -507,8 +511,9 @@ honda:
 4. **Язык интерфейса архива.** Дефолт: русский UI, контент ja+ru.
 5. **Инкрементальность.** Дефолт: разовый полный обход + повторный discover
    для новых заметок.
-6. **3-е поколение Freed.** Включаем по коду `GT*`; если появятся отдельные
-   модели minkara для новых кузовов — добавим в конфиг.
+6. **Поколения и годы.** Берём все; поколение — только метаданные. Если
+   появятся отдельные модели minkara для новых кузовов, их добавит
+   `00_models.py --match freed --write`.
 
 ---
 

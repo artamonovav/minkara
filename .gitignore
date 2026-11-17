@@ -15,6 +15,10 @@ venv/
 .env
 config/settings.local.env
 
+# --- generated, machine-specific ---
+opencode.json
+config/models.discovered.yaml
+
 # --- os / editor ---
 .DS_Store
 *.swp
