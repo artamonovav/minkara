@@ -26,6 +26,7 @@ from minkara.config import (  # noqa: E402
 )
 from minkara.db import Store  # noqa: E402
 from minkara.http import BlockedError, Fetcher, FetchError  # noqa: E402
+from minkara.progress import Progress  # noqa: E402
 
 PARSERS = {
     "note": parse.parse_note,
@@ -71,11 +72,18 @@ def parse_page(kind: str, html: str, url: str) -> dict:
 
 
 def fetch_cars(store: Store, settings, fetcher: Fetcher, rules: dict, limit: int | None) -> int:
+    pending = store.pending_cars(limit=limit)
+    already = store.conn.execute(
+        "SELECT COUNT(*) FROM cars WHERE state IN ('parsed','skipped','error')"
+    ).fetchone()[0]
+    progress = Progress(already + len(pending), "машины")
     done = 0
-    for car in store.pending_cars(limit=limit):
+    for car in pending:
         car_id = int(car["car_id"])
         if car_id == 0:
             store.upsert_car(0, state="skipped")
+            done += 1
+            progress.update(already + done, "car 0 пропущен")
             continue
         url = car["url"] or (
             f"{settings.base_url}/userid/{car['uid']}/car/{car_id}/profile.aspx"
@@ -84,7 +92,8 @@ def fetch_cars(store: Store, settings, fetcher: Fetcher, rules: dict, limit: int
             html = fetcher.text(url)
         except FetchError as exc:
             store.upsert_car(car_id, state="error", error=str(exc))
-            print(f"  ! car {car_id}: {exc}")
+            done += 1
+            progress.update(already + done, f"car {car_id}: ошибка")
             continue
         info = urls.classify(url)
         save_raw(settings, info, html)
@@ -109,7 +118,11 @@ def fetch_cars(store: Store, settings, fetcher: Fetcher, rules: dict, limit: int
         )
         store.apply_generation(car_id, generation)
         done += 1
-        print(f"  car {car_id}: {parsed.get('code') or '?'} -> поколение {generation}")
+        progress.update(
+            already + done,
+            f"car {car_id}: {parsed.get('code') or '?'} -> поколение {generation}",
+        )
+    progress.close(already + done)
     return done
 
 
@@ -122,15 +135,26 @@ def fetch_pages(
     limit: int | None,
     with_thumbs: bool,
 ) -> int:
+    pending = store.pending_pages(kinds=kinds, limit=limit)
+    already = 0
+    if kinds:
+        placeholders = ", ".join("?" for _ in kinds)
+        already = store.conn.execute(
+            f"SELECT COUNT(*) FROM pages WHERE kind IN ({placeholders}) "
+            "AND state IN ('parsed','skipped','error')",
+            kinds,
+        ).fetchone()[0]
+    progress = Progress(already + len(pending), "страницы")
     done = 0
-    for page in store.pending_pages(kinds=kinds, limit=limit):
+    for page in pending:
         url = page["url"]
         kind = page["kind"]
         try:
             html = fetcher.text(url)
         except FetchError as exc:
             store.set_page(page["id"], state="error", error=str(exc))
-            print(f"  ! {kind} {url}: {exc}")
+            done += 1
+            progress.update(already + done, f"{kind} {page['id']}: ошибка")
             continue
         info = urls.classify(url)
         rel = save_raw(settings, info, html)
@@ -170,29 +194,38 @@ def fetch_pages(
                     note=review_info["note"],
                 )
         done += 1
-        print(f"  {kind} {page['id']}: {parsed.get('title') or url}")
+        progress.update(already + done, f"{kind} {page['id']}")
+    progress.close(already + done)
     return done
 
 
 def fetch_assets(store: Store, settings, fetcher: Fetcher, limit: int | None) -> int:
+    pending = store.pending_assets(limit=limit)
+    already = store.conn.execute(
+        "SELECT COUNT(*) FROM assets WHERE state IN ('done','error')"
+    ).fetchone()[0]
+    progress = Progress(already + len(pending), "медиа")
     done = 0
-    for asset in store.pending_assets(limit=limit):
+    for asset in pending:
         url = asset["url"]
         rel = urls.asset_relpath(url)
         dest = settings.assets_dir / rel
         if dest.exists():
             store.set_asset(asset["id"], state="done", file=rel, bytes=dest.stat().st_size)
+            done += 1
+            progress.update(already + done)
             continue
         try:
             size = fetcher.download(url, dest)
         except FetchError as exc:
             store.set_asset(asset["id"], state="error", error=str(exc))
-            print(f"  ! asset {url}: {exc}")
+            done += 1
+            progress.update(already + done, "ошибка")
             continue
         store.set_asset(asset["id"], state="done", file=rel, bytes=size, http_code=200)
         done += 1
-        if done % 25 == 0:
-            print(f"  ... картинок скачано: {done}")
+        progress.update(already + done)
+    progress.close(already + done)
     return done
 
 

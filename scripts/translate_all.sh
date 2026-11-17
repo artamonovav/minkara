@@ -24,6 +24,7 @@ if ! flock -n 9; then
 fi
 
 exec >>"$LOG" 2>&1
+export PYTHONUNBUFFERED=1
 say() { printf '\n=== %s | %s ===\n' "$(date -Is)" "$*"; }
 
 say "START translate_all (DeepL >= ${MIN} символов, остальное Google)"

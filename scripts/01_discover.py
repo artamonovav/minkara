@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,17 +79,33 @@ def main() -> int:
         ]
 
     total_items = 0
+    total_combos = len(models) * len(section_names)
+    combo_index = 0
+    started = time.monotonic()
     try:
         for model in models:
             for section in section_names:
+                combo_index += 1
                 if section not in sections:
-                    print(f"! раздел {section} не описан в config/models.yaml — пропуск")
+                    print(
+                        f"[{combo_index}/{total_combos}] ! раздел {section} "
+                        "не описан в config/models.yaml — пропуск",
+                        flush=True,
+                    )
                     continue
                 if section not in ("note", "partsreview", "review"):
-                    print(f"! {model.key}/{section}: раздел пока не поддержан — пропуск")
+                    print(
+                        f"[{combo_index}/{total_combos}] ! {model.key}/{section}: "
+                        "раздел пока не поддержан — пропуск",
+                        flush=True,
+                    )
                     continue
 
-                print(f"\n== {model.brand}/{model.key}/{section} ==")
+                print(
+                    f"\n[{combo_index}/{total_combos}] "
+                    f"{model.brand}/{model.key}/{section}",
+                    flush=True,
+                )
                 page_no = 1
                 while True:
                     url = urls.canonical(
@@ -115,7 +132,7 @@ def main() -> int:
                             # У части моделей страница за концом списка отдаёт 404,
                             # у других — пустую 200. И то, и другое значит «конец».
                             if "HTTP 404" in str(exc):
-                                print(f"  стр. {page_no}: 404 — конец списка")
+                                print(f"  стр. {page_no}: 404 — конец списка", flush=True)
                                 break
                             raise
                     if section == "note":
@@ -136,7 +153,7 @@ def main() -> int:
                         file=rel,
                     )
                     if not items:
-                        print(f"  стр. {page_no}: конец списка")
+                        print(f"  стр. {page_no}: конец списка", flush=True)
                         break
 
                     for item in items:
@@ -188,10 +205,15 @@ def main() -> int:
                                 title=item["title"],
                             )
                     total_items += len(items)
-                    print(f"  стр. {page_no}: +{len(items)} (всего {total_items})")
+                    print(
+                        f"  стр. {page_no}: +{len(items)} "
+                        f"(всего найдено {total_items}, "
+                        f"{time.monotonic() - started:.0f} c)",
+                        flush=True,
+                    )
                     page_no += 1
                     if args.max_pages and page_no > args.max_pages:
-                        print(f"  остановка по --max-pages={args.max_pages}")
+                        print(f"  остановка по --max-pages={args.max_pages}", flush=True)
                         break
     except BlockedError as exc:
         print(f"\nОШИБКА: {exc}")
@@ -201,10 +223,10 @@ def main() -> int:
         return 2
 
     stats = store.stats()
-    print("\nГотово.")
-    print(f"  страниц всего: {stats['pages']} ({stats['pages_by_kind']})")
-    print(f"  машин в очереди: {stats['cars']}")
-    print(f"  элементов найдено за запуск: {total_items}")
+    print("\nГотово.", flush=True)
+    print(f"  страниц всего: {stats['pages']} ({stats['pages_by_kind']})", flush=True)
+    print(f"  машин в очереди: {stats['cars']}", flush=True)
+    print(f"  элементов найдено за запуск: {total_items}", flush=True)
     return 0
 
 
