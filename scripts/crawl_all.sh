@@ -46,9 +46,17 @@ PAGE_DELAY="${MINKARA_DELAY:-0.3}"
 ASSET_WORKERS="${MINKARA_ASSET_WORKERS:-6}"
 ASSET_DELAY="${MINKARA_ASSET_DELAY:-0.15}"
 
-say "1/7 discover (note, partsreview, review)"
-"$PY" scripts/01_discover.py --brand honda "${MODELS_ARG[@]}" \
-  --sections note,partsreview,review
+DISCOVER_MARKER="$ROOT/work/discover.done"
+if [ -f "$DISCOVER_MARKER" ] && [ "${MINKARA_REFRESH:-0}" != "1" ]; then
+  say "1/7 discover пропущен: есть маркер $DISCOVER_MARKER"
+  say "    (MINKARA_REFRESH=1 или удалить маркер — чтобы обойти листинги заново)"
+else
+  say "1/7 discover (note, partsreview, review)"
+  "$PY" scripts/01_discover.py --brand honda "${MODELS_ARG[@]}" \
+    --sections note,partsreview,review
+  touch "$DISCOVER_MARKER"
+  say "discover завершён, маркер создан"
+fi
 
 say "2/7 fetch: машины + заметки (workers=${WORKERS}, delay=${PAGE_DELAY})"
 "$PY" scripts/02_fetch.py --kind note --no-assets \
