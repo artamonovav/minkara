@@ -34,6 +34,7 @@ from minkara import deepl as deepl_api  # noqa: E402
 from minkara import parse, quality  # noqa: E402
 from minkara.config import load_settings  # noqa: E402
 from minkara.db import Store  # noqa: E402
+from minkara.progress import Progress  # noqa: E402
 
 try:
     import yaml
@@ -400,6 +401,7 @@ def fix_bad(store: Store, glossary: dict[str, str], args, deepl_key: str) -> int
     fixed = 0
     failed = 0
     report_rows: list[tuple[str, str]] = []
+    progress = Progress(len(scored), "deepl-fix")
     for start in range(0, len(scored), args.batch_size):
         batch = scored[start : start + args.batch_size]
         texts = [item[2]["ja"] for item in batch]
@@ -417,7 +419,9 @@ def fix_bad(store: Store, glossary: dict[str, str], args, deepl_key: str) -> int
             store.set_translation(unit["id"], value, "deepl")
             fixed += 1
             report_rows.append((unit["ja"], value))
-        print(f"  исправлено: {fixed}/{len(scored)}")
+        progress.update(fixed + failed, f"ok {fixed}, ошибок {failed}")
+
+    progress.close(fixed + failed)
 
     if args.report:
         write_report(args.report, "deepl-fix", report_rows)
@@ -511,6 +515,7 @@ def main() -> int:
     translated = 0
     failed = 0
     report_rows: list[tuple[str, str]] = []
+    progress = Progress(len(units), translator.name)
     for start in range(0, len(units), args.batch_size):
         batch = units[start : start + args.batch_size]
         texts = [unit["ja"] for unit in batch]
@@ -543,7 +548,9 @@ def main() -> int:
             translated += 1
             report_rows.append((unit["ja"], value))
         store.conn.commit()
-        print(f"  переведено: {translated}/{len(units)}")
+        progress.update(translated + failed, f"ok {translated}, ошибок {failed}")
+
+    progress.close(translated + failed)
 
     if args.report:
         write_report(args.report, translator.name, report_rows)
