@@ -1,4 +1,19 @@
 #!/usr/bin/env bash
+# Если запустили через sh — перезапускаемся через bash (нужны массивы).
+if [ -z "${BASH_VERSION:-}" ]; then
+  exec bash "$0" "$@"
+fi
+
+# Работаем с копией скрипта: правка файла в репозитории во время выкачки
+# не должна ломать уже запущенный процесс (bash дочитывает скрипт с диска).
+if [ "${MINKARA_RUNCOPY:-0}" != "1" ]; then
+  SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  RUN="$(dirname "$SELF")/../work/$(basename "$0" .sh).run.sh"
+  mkdir -p "$(dirname "$RUN")"
+  cp "$SELF" "$RUN"
+  MINKARA_RUNCOPY=1 exec bash "$RUN" "$@"
+fi
+
 # Полная выкачка архива Honda Freed (все модели со словом freed).
 #
 # Запуск:   bash scripts/crawl_all.sh
