@@ -39,21 +39,32 @@ else
   MODELS_ARG=(--match freed)
 fi
 
+# Параллельность: страницы — 4 потока при общем лимите ~3.3 запроса/с,
+# медиа — 6 потоков при ~6.7 запроса/с (CDN терпит).
+WORKERS="${MINKARA_WORKERS:-4}"
+PAGE_DELAY="${MINKARA_DELAY:-0.3}"
+ASSET_WORKERS="${MINKARA_ASSET_WORKERS:-6}"
+ASSET_DELAY="${MINKARA_ASSET_DELAY:-0.15}"
+
 say "1/7 discover (note, partsreview, review)"
 "$PY" scripts/01_discover.py --brand honda "${MODELS_ARG[@]}" \
   --sections note,partsreview,review
 
-say "2/7 fetch: машины + заметки"
-"$PY" scripts/02_fetch.py --kind note --no-assets
+say "2/7 fetch: машины + заметки (workers=${WORKERS}, delay=${PAGE_DELAY})"
+"$PY" scripts/02_fetch.py --kind note --no-assets \
+  --workers "$WORKERS" --delay "$PAGE_DELAY"
 
 say "3/7 fetch: товары (регистрируют отзывы)"
-"$PY" scripts/02_fetch.py --kind product --no-assets
+"$PY" scripts/02_fetch.py --kind product --no-assets \
+  --workers "$WORKERS" --delay "$PAGE_DELAY"
 
 say "4/7 fetch: отзывы о запчастях и об авто"
-"$PY" scripts/02_fetch.py --kind parts,review --no-assets
+"$PY" scripts/02_fetch.py --kind parts,review --no-assets \
+  --workers "$WORKERS" --delay "$PAGE_DELAY"
 
-say "5/7 медиа"
-"$PY" scripts/02_fetch.py --only-assets
+say "5/7 медиа (workers=${ASSET_WORKERS}, delay=${ASSET_DELAY})"
+"$PY" scripts/02_fetch.py --only-assets \
+  --asset-workers "$ASSET_WORKERS" --asset-delay "$ASSET_DELAY"
 
 if [ "${MINKARA_CRAWL_TRANSLATE:-0}" = "1" ]; then
   say "6/7 перевод"

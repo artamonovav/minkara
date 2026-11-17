@@ -1,6 +1,7 @@
 """Вежливый HTTP-клиент: ограничение частоты, повторы, детект geo-блока."""
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 
@@ -17,29 +18,50 @@ class BlockedError(FetchError):
     """Сайт вернул 403 — вероятно, geo-блок (нужен VPN вне РФ)."""
 
 
+class RateLimiter:
+    """Общий для потоков ограничитель: не чаще одного запроса в `delay`."""
+
+    def __init__(self, delay: float) -> None:
+        self.delay = delay
+        self._lock = threading.Lock()
+        self._last = 0.0
+
+    def wait(self) -> None:
+        with self._lock:
+            elapsed = time.monotonic() - self._last
+            if elapsed < self.delay:
+                time.sleep(self.delay - elapsed)
+            self._last = time.monotonic()
+
+
 class Fetcher:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, delay: float | None = None) -> None:
         self.settings = settings
-        self.session = requests.Session()
-        self.session.headers.update(
-            {
-                "User-Agent": settings.user_agent,
-                "Accept": (
-                    "text/html,application/xhtml+xml,application/xml;q=0.9,"
-                    "image/avif,image/webp,*/*;q=0.8"
-                ),
-                "Accept-Language": "ja,en;q=0.8",
-                "Accept-Encoding": "gzip, deflate",
-                "Connection": "keep-alive",
-            }
-        )
-        self._last_request = 0.0
+        self.limiter = RateLimiter(settings.delay if delay is None else delay)
+        self._local = threading.local()
+
+    @property
+    def session(self) -> requests.Session:
+        session = getattr(self._local, "session", None)
+        if session is None:
+            session = requests.Session()
+            session.headers.update(
+                {
+                    "User-Agent": self.settings.user_agent,
+                    "Accept": (
+                        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                        "image/avif,image/webp,*/*;q=0.8"
+                    ),
+                    "Accept-Language": "ja,en;q=0.8",
+                    "Accept-Encoding": "gzip, deflate",
+                    "Connection": "keep-alive",
+                }
+            )
+            self._local.session = session
+        return session
 
     def _wait(self) -> None:
-        elapsed = time.monotonic() - self._last_request
-        if elapsed < self.settings.delay:
-            time.sleep(self.settings.delay - elapsed)
-        self._last_request = time.monotonic()
+        self.limiter.wait()
 
     def get(self, url: str) -> requests.Response:
         last_error: str = ""

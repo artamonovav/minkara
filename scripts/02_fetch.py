@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -126,6 +127,62 @@ def fetch_cars(store: Store, settings, fetcher: Fetcher, rules: dict, limit: int
     return done
 
 
+def fetch_one_page(settings, fetcher: Fetcher, page) -> tuple:
+    """Сетевой этап одного URL; БД не трогает, поэтому безопасен в потоках."""
+    url = page["url"]
+    try:
+        html = fetcher.text(url)
+        info = urls.classify(url)
+        rel = save_raw(settings, info, html)
+        parsed = parse_page(page["kind"], html, url)
+        return page, rel, parsed, None
+    except FetchError as exc:
+        return page, None, None, str(exc)
+    except Exception as exc:  # одна битая страница не должна ронять выкачку
+        return page, None, None, f"{type(exc).__name__}: {exc}"
+
+
+def apply_page_result(store, settings, rules, page, rel, parsed, error, with_thumbs) -> None:
+    if error:
+        store.set_page(page["id"], state="error", error=error)
+        return
+    kind = page["kind"]
+    generation = page["generation"]
+    if generation is None and kind == "review" and parsed.get("grade"):
+        generation = generation_for(
+            rules, page["brand"], page["model"], None, parsed.get("grade")
+        )
+    store.set_page(
+        page["id"],
+        state="parsed",
+        http_code=200,
+        file=rel,
+        title=parsed.get("title") or page["title"],
+        generation=generation,
+        meta_json=json.dumps(parsed, ensure_ascii=False),
+        fetched_at=now(),
+        error=None,
+    )
+    register_assets(store, settings, page["url"], parsed, with_thumbs)
+    if kind == "product":
+        # Страница товара содержит ссылки на отзывы — регистрируем их.
+        for href in parsed.get("reviews") or []:
+            review_url = urls.canonical(urls.absolute(settings.base_url, href))
+            review_info = urls.classify(review_url)
+            if review_info["kind"] != "parts":
+                continue
+            store.upsert_page(
+                review_url,
+                kind="parts",
+                brand=page["brand"],
+                model=page["model"],
+                section="partsreview",
+                uid=review_info["uid"],
+                car=review_info["car"],
+                note=review_info["note"],
+            )
+
+
 def fetch_pages(
     store: Store,
     settings,
@@ -134,6 +191,7 @@ def fetch_pages(
     kinds: list[str],
     limit: int | None,
     with_thumbs: bool,
+    workers: int = 1,
 ) -> int:
     pending = store.pending_pages(kinds=kinds, limit=limit)
     already = 0
@@ -146,85 +204,75 @@ def fetch_pages(
         ).fetchone()[0]
     progress = Progress(already + len(pending), "страницы")
     done = 0
-    for page in pending:
-        url = page["url"]
-        kind = page["kind"]
-        try:
-            html = fetcher.text(url)
-        except FetchError as exc:
-            store.set_page(page["id"], state="error", error=str(exc))
-            done += 1
-            progress.update(already + done, f"{kind} {page['id']}: ошибка")
-            continue
-        info = urls.classify(url)
-        rel = save_raw(settings, info, html)
-        parsed = parse_page(kind, html, url)
-        generation = page["generation"]
-        if generation is None and kind == "review" and parsed.get("grade"):
-            generation = generation_for(
-                rules, page["brand"], page["model"], None, parsed.get("grade")
-            )
-        store.set_page(
-            page["id"],
-            state="parsed",
-            http_code=200,
-            file=rel,
-            title=parsed.get("title") or page["title"],
-            generation=generation,
-            meta_json=json.dumps(parsed, ensure_ascii=False),
-            fetched_at=now(),
-            error=None,
-        )
-        register_assets(store, settings, url, parsed, with_thumbs)
-        if kind == "product":
-            # Страница товара содержит ссылки на отзывы — регистрируем их.
-            for href in (parsed.get("reviews") or []):
-                review_url = urls.canonical(urls.absolute(settings.base_url, href))
-                review_info = urls.classify(review_url)
-                if review_info["kind"] != "parts":
-                    continue
-                store.upsert_page(
-                    review_url,
-                    kind="parts",
-                    brand=page["brand"],
-                    model=page["model"],
-                    section="partsreview",
-                    uid=review_info["uid"],
-                    car=review_info["car"],
-                    note=review_info["note"],
+
+    if workers > 1 and len(pending) > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(fetch_one_page, settings, fetcher, page) for page in pending]
+            for future in as_completed(futures):
+                page, rel, parsed, error = future.result()
+                apply_page_result(
+                    store, settings, rules, page, rel, parsed, error, with_thumbs
                 )
-        done += 1
-        progress.update(already + done, f"{kind} {page['id']}")
+                done += 1
+                progress.update(already + done, f"{page['kind']} {page['id']}")
+    else:
+        for page in pending:
+            page, rel, parsed, error = fetch_one_page(settings, fetcher, page)
+            apply_page_result(
+                store, settings, rules, page, rel, parsed, error, with_thumbs
+            )
+            done += 1
+            progress.update(already + done, f"{page['kind']} {page['id']}")
     progress.close(already + done)
     return done
 
 
-def fetch_assets(store: Store, settings, fetcher: Fetcher, limit: int | None) -> int:
+def download_one(settings, fetcher: Fetcher, asset) -> tuple:
+    url = asset["url"]
+    rel = urls.asset_relpath(url)
+    dest = settings.assets_dir / rel
+    if dest.exists():
+        return asset, rel, dest.stat().st_size, None
+    try:
+        return asset, rel, fetcher.download(url, dest), None
+    except FetchError as exc:
+        return asset, rel, None, str(exc)
+    except Exception as exc:
+        return asset, rel, None, f"{type(exc).__name__}: {exc}"
+
+
+def fetch_assets(
+    store: Store, settings, fetcher: Fetcher, limit: int | None, workers: int = 1
+) -> int:
     pending = store.pending_assets(limit=limit)
     already = store.conn.execute(
         "SELECT COUNT(*) FROM assets WHERE state IN ('done','error')"
     ).fetchone()[0]
     progress = Progress(already + len(pending), "медиа")
     done = 0
-    for asset in pending:
-        url = asset["url"]
-        rel = urls.asset_relpath(url)
-        dest = settings.assets_dir / rel
-        if dest.exists():
-            store.set_asset(asset["id"], state="done", file=rel, bytes=dest.stat().st_size)
+
+    def apply(asset, rel, size, error) -> None:
+        if error:
+            store.set_asset(asset["id"], state="error", error=error)
+        else:
+            store.set_asset(
+                asset["id"], state="done", file=rel, bytes=size, http_code=200
+            )
+
+    if workers > 1 and len(pending) > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(download_one, settings, fetcher, asset) for asset in pending]
+            for future in as_completed(futures):
+                asset, rel, size, error = future.result()
+                apply(asset, rel, size, error)
+                done += 1
+                progress.update(already + done, "ошибка" if error else "")
+    else:
+        for asset in pending:
+            asset, rel, size, error = download_one(settings, fetcher, asset)
+            apply(asset, rel, size, error)
             done += 1
-            progress.update(already + done)
-            continue
-        try:
-            size = fetcher.download(url, dest)
-        except FetchError as exc:
-            store.set_asset(asset["id"], state="error", error=str(exc))
-            done += 1
-            progress.update(already + done, "ошибка")
-            continue
-        store.set_asset(asset["id"], state="done", file=rel, bytes=size, http_code=200)
-        done += 1
-        progress.update(already + done)
+            progress.update(already + done, "ошибка" if error else "")
     progress.close(already + done)
     return done
 
@@ -264,6 +312,13 @@ def main() -> int:
     parser.add_argument(
         "--only-assets", action="store_true", help="только докачать медиа, без страниц"
     )
+    parser.add_argument("--workers", type=int, default=1, help="потоков для страниц")
+    parser.add_argument(
+        "--asset-workers", type=int, default=4, help="потоков для медиа"
+    )
+    parser.add_argument(
+        "--asset-delay", type=float, default=0.15, help="пауза между запросами медиа"
+    )
     parser.add_argument("--no-assets", action="store_true", help="не скачивать медиа")
     parser.add_argument("--with-thumbs", action="store_true", help="качать и миниатюры")
     parser.add_argument("--retry-errors", action="store_true", help="повторить страницы с ошибками")
@@ -286,6 +341,7 @@ def main() -> int:
         print(f"Сброшено в очередь после ошибок: {count}")
 
     fetcher = Fetcher(settings)
+    asset_fetcher = Fetcher(settings, delay=args.asset_delay)
     rules = load_generation_rules(settings)
     limit = args.limit or None
     cars_limit = args.cars_limit or None
@@ -299,11 +355,24 @@ def main() -> int:
             cars = fetch_cars(store, settings, fetcher, rules, cars_limit)
             print("== страницы ==")
             pages = fetch_pages(
-                store, settings, fetcher, rules, kinds, limit, args.with_thumbs
+                store,
+                settings,
+                fetcher,
+                rules,
+                kinds,
+                limit,
+                args.with_thumbs,
+                workers=args.workers,
             )
         if not args.no_assets:
             print("== медиа ==")
-            assets = fetch_assets(store, settings, fetcher, assets_limit)
+            assets = fetch_assets(
+                store,
+                settings,
+                asset_fetcher,
+                assets_limit,
+                workers=args.asset_workers,
+            )
     except BlockedError as exc:
         print(f"\nОШИБКА: {exc}")
         return 2
