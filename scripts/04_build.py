@@ -409,7 +409,7 @@ def render_qa(settings, page, meta, tr, path_map, lang) -> str:
     return layout(title_ru or title_ja, "".join(body), "../")
 
 
-def render_model(settings, page, meta, tr, path_map, lang) -> str:
+def render_model(settings, page, meta, tr, path_map, lang, related=None) -> str:
     title_ru = tr.get(("title", 0))
     title_ja = meta.get("title") or ""
     body = [f"<h1>{esc(title_ru or title_ja)}</h1>"]
@@ -422,10 +422,27 @@ def render_model(settings, page, meta, tr, path_map, lang) -> str:
     )
     links = meta.get("links") or {}
     if links:
-        body.append("<h2>Разделы</h2>")
+        body.append("<h2>Разделы на minkara</h2>")
         for name, href in links.items():
             body.append(
                 f"<div class='card'><a class='external' href='{esc(href)}'>{esc(name)}</a></div>"
+            )
+    groups: dict[str, list[dict]] = {}
+    for item in related or []:
+        if item["k"] == "model":
+            continue
+        groups.setdefault(item["k"], []).append(item)
+    for kind, items in groups.items():
+        body.append(f"<h2>{esc(KIND_LABELS.get(kind, kind))} ({len(items)})</h2>")
+        for item in items[:100]:
+            title = item["tr"] or item["tj"] or "(без названия)"
+            body.append(
+                f"<div class='card'><a href='../{esc(item['u'])}'>{esc(title)}</a></div>"
+            )
+        if len(items) > 100:
+            body.append(
+                f"<div class='meta'>… и ещё {len(items) - 100}; полный список — в "
+                "<a href='../index.html'>общем индексе</a></div>"
             )
     return layout(title_ru or title_ja, "".join(body), "../")
 
@@ -516,19 +533,13 @@ def main() -> int:
         pages.extend(store.parsed_pages(kind))
     path_map = {page["url"]: page_relpath(page) for page in pages}
 
+    # Первый проход: метаданные и индексные записи (нужны страницам моделей).
+    records: list[tuple] = []
     entries: list[dict] = []
-    built = 0
     for page in pages:
         meta = json.loads(page["meta_json"])
         tr = store.units_for_page(page["id"])
-        renderer = RENDERERS.get(page["kind"])
-        if renderer is None:
-            continue
-        html_text = renderer(settings, page, meta, tr, path_map, args.lang)
-        target = settings.site_dir / page_relpath(page)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(html_text, encoding="utf-8")
-
+        records.append((page, meta, tr))
         entries.append(
             {
                 "u": page_relpath(page),
@@ -543,6 +554,31 @@ def main() -> int:
                 "x": search_text(meta, tr),
             }
         )
+
+    by_model: dict[str, list[dict]] = {}
+    for entry in entries:
+        by_model.setdefault(entry["m"], []).append(entry)
+
+    built = 0
+    for page, meta, tr in records:
+        renderer = RENDERERS.get(page["kind"])
+        if renderer is None:
+            continue
+        if page["kind"] == "model":
+            html_text = renderer(
+                settings,
+                page,
+                meta,
+                tr,
+                path_map,
+                args.lang,
+                related=by_model.get(page["model"] or "", []),
+            )
+        else:
+            html_text = renderer(settings, page, meta, tr, path_map, args.lang)
+        target = settings.site_dir / page_relpath(page)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(html_text, encoding="utf-8")
         built += 1
 
     (settings.site_dir / "search-index.js").write_text(
