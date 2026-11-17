@@ -85,9 +85,13 @@ say "4/7 fetch: отзывы о запчастях, об авто и Q&A"
 "$PY" scripts/02_fetch.py --kind parts,review,qa --no-assets \
   --workers "$WORKERS" --delay "$PAGE_DELAY"
 
-say "5/7 медиа (workers=${ASSET_WORKERS}, delay=${ASSET_DELAY})"
-"$PY" scripts/02_fetch.py --only-assets \
-  --asset-workers "$ASSET_WORKERS" --asset-delay "$ASSET_DELAY"
+if [ "${MINKARA_SKIP_ASSETS:-0}" = "1" ]; then
+  say "5/7 медиа пропущено (MINKARA_SKIP_ASSETS=1)"
+else
+  say "5/7 медиа (workers=${ASSET_WORKERS}, delay=${ASSET_DELAY})"
+  "$PY" scripts/02_fetch.py --only-assets \
+    --asset-workers "$ASSET_WORKERS" --asset-delay "$ASSET_DELAY"
+fi
 
 if [ "${MINKARA_CRAWL_TRANSLATE:-0}" = "1" ]; then
   say "6/7 перевод"
