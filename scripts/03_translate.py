@@ -446,6 +446,10 @@ def main() -> int:
         help="сбросить переводы указанного движка (например, echo) и перевести заново",
     )
     parser.add_argument("--report", help="сохранить сэмпл переводов в markdown-файл")
+    parser.add_argument(
+        "--kinds",
+        help="только страницы указанных типов (note,review,qa,model,product,parts)",
+    )
     parser.add_argument("--min-chars", type=int, default=0, help="только тексты длиннее N символов")
     parser.add_argument("--max-chars", type=int, default=0, help="только тексты короче N символов")
     parser.add_argument("--check-usage", action="store_true", help="показать остаток квоты DeepL")
@@ -484,7 +488,8 @@ def main() -> int:
 
     translator = build_translator(args.provider, glossary)
 
-    units = store.pending_units(limit=args.limit or None)
+    kinds = [k.strip() for k in (args.kinds or "").split(",") if k.strip()]
+    units = store.pending_units(limit=args.limit or None, kinds=kinds or None)
     if args.min_chars:
         units = [unit for unit in units if len(unit["ja"]) >= args.min_chars]
     if args.max_chars:

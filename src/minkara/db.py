@@ -295,11 +295,27 @@ class Store:
             self.conn.commit()
         return len(ids)
 
-    def pending_units(self, limit: int | None = None) -> list[sqlite3.Row]:
-        sql = """SELECT * FROM text_units
-                 WHERE ru IS NULL AND length(trim(ja)) > 0
-                 ORDER BY id"""
+    def pending_units(
+        self, limit: int | None = None, kinds: list[str] | None = None
+    ) -> list[sqlite3.Row]:
+        sql = """SELECT t.* FROM text_units t
+                 JOIN pages p ON p.id = t.page_id
+                 WHERE t.ru IS NULL AND length(trim(t.ja)) > 0"""
         params: list[Any] = []
+        if kinds:
+            placeholders = ", ".join("?" for _ in kinds)
+            sql += f" AND p.kind IN ({placeholders})"
+            params.extend(kinds)
+        # Сначала самое ценное: заметки, отзывы об авто, Q&A, модели,
+        # затем товары и отзывы о запчастях.
+        sql += """ ORDER BY CASE p.kind
+                     WHEN 'note' THEN 1
+                     WHEN 'review' THEN 2
+                     WHEN 'qa' THEN 3
+                     WHEN 'model' THEN 4
+                     WHEN 'product' THEN 5
+                     WHEN 'parts' THEN 6
+                     ELSE 7 END, t.id"""
         if limit:
             sql += " LIMIT ?"
             params.append(limit)

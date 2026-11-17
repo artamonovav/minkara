@@ -33,8 +33,9 @@ say "START translate_all (DeepL >= ${MIN} символов, остальное G
 say "1/4 синхронизация единиц из БД"
 "$PY" scripts/03_translate.py --sync-only
 
-say "2/4 DeepL: объёмные тексты"
+say "2/4 DeepL: объёмные тексты (приоритетные разделы)"
 "$PY" scripts/03_translate.py --provider deepl --min-chars "$MIN" \
+  --kinds note,review,qa,model \
   --report work/translation-deepl-long.md
 
 say "3/4 Google: остальное"
