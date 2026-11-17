@@ -1,0 +1,22 @@
+# --- runtime data (never in git) ---
+data/
+out/
+work/
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# --- local secrets / overrides ---
+.env
+config/settings.local.env
+
+# --- os / editor ---
+.DS_Store
+*.swp
+.idea/
+.vscode/

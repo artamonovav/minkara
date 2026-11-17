@@ -1,0 +1,49 @@
+# Правила «код кузова (型式) -> поколение».
+#
+# Код извлекается из профиля машины (поле 型式, например "6AA-GB7") и
+# сравнивается по префиксу. Неизвестный код даёт generation=unknown.
+#
+# Структура: <brand> -> <model> -> список правил.
+# Модель может отсутствовать — тогда применяются правила марки (brand_default).
+
+honda:
+  # Общие правила для всех моделей Honda Freed* (если модель не описана ниже).
+  brand_default:
+    - generation: 1
+      codes: [GB1, GB2, GB3, GB4]
+    - generation: 2
+      codes: [GB5, GB6, GB7, GB8]
+    - generation: 3
+      codes: [GT1, GT2, GT3, GT4, GT5, GT6, GT7, GT8]
+
+  freed:
+    - generation: 1
+      codes: [GB1, GB2, GB3, GB4]
+    - generation: 2
+      codes: [GB5, GB6]
+    - generation: 3
+      codes: [GT1, GT2, GT3, GT4, GT5, GT6, GT7, GT8]
+
+  freed_hybrid:
+    - generation: 1
+      codes: [GB3, GB4]
+    - generation: 2
+      codes: [GB7, GB8]
+    - generation: 3
+      codes: [GT1, GT2, GT3, GT4, GT5, GT6, GT7, GT8]
+
+  freed_plus:
+    - generation: 2
+      codes: [GB5, GB6]
+
+  freed_plus_hybrid:
+    - generation: 2
+      codes: [GB7, GB8]
+
+  freed_spike:
+    - generation: 1
+      codes: [GB3, GB4]
+
+  freed_spike_hybrid:
+    - generation: 1
+      codes: [GB3, GB4]
