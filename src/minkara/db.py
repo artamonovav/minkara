@@ -266,7 +266,9 @@ class Store:
         self.conn.commit()
 
     # ------------------------------------------------------------ text units
-    def upsert_text_unit(self, page_id: int, kind: str, idx: int, ja: str) -> None:
+    def upsert_text_unit(
+        self, page_id: int, kind: str, idx: int, ja: str, commit: bool = True
+    ) -> None:
         self.conn.execute(
             """INSERT INTO text_units (page_id, kind, idx, ja, hash)
                VALUES (?, ?, ?, ?, ?)
@@ -274,7 +276,8 @@ class Store:
                DO UPDATE SET ja = excluded.ja, hash = excluded.hash""",
             (page_id, kind, idx, ja, text_hash(ja)),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def purge_non_japanese(self) -> int:
         """Удаляет единицы без японского текста (числа, латиница)."""
@@ -330,12 +333,15 @@ class Store:
             )
         )
 
-    def set_translation(self, unit_id: int, ru: str, engine: str) -> None:
+    def set_translation(
+        self, unit_id: int, ru: str, engine: str, commit: bool = True
+    ) -> None:
         self.conn.execute(
             "UPDATE text_units SET ru = ?, engine = ?, translated_at = datetime('now') WHERE id = ?",
             (ru, engine, unit_id),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     # ------------------------------------------------------------------ stats
     def stats(self) -> dict[str, Any]:

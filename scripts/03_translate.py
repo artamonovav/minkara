@@ -325,8 +325,11 @@ def sync_units(store: Store) -> int:
             meta = json.loads(page["meta_json"])
             for unit in parse.extract_text_units(meta, kind):
                 if unit.get("ja"):
-                    store.upsert_text_unit(page["id"], unit["kind"], unit["idx"], unit["ja"])
+                    store.upsert_text_unit(
+                        page["id"], unit["kind"], unit["idx"], unit["ja"], commit=False
+                    )
                     total += 1
+    store.conn.commit()
     return total
 
 
@@ -536,9 +539,10 @@ def main() -> int:
                 failed += 1
                 print(f"  ! сомнительный перевод [{unit['kind']}:{unit['idx']}]: {value[:70]}")
                 continue
-            store.set_translation(unit["id"], value, translator.name)
+            store.set_translation(unit["id"], value, translator.name, commit=False)
             translated += 1
             report_rows.append((unit["ja"], value))
+        store.conn.commit()
         print(f"  переведено: {translated}/{len(units)}")
 
     if args.report:
