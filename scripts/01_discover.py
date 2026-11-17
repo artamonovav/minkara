@@ -95,7 +95,29 @@ def main() -> int:
                         urls.listing_url(settings.base_url, model.brand, model.key, section, page_no)
                     )
                     info = urls.classify(url)
-                    html = fetcher.text(url)
+                    html = None
+                    existing = store.conn.execute(
+                        "SELECT state, file FROM pages WHERE url = ?", (url,)
+                    ).fetchone()
+                    if (
+                        existing
+                        and existing["state"] == "parsed"
+                        and existing["file"]
+                        and not args.fresh
+                    ):
+                        cached = settings.raw_dir / existing["file"]
+                        if cached.exists():
+                            html = cached.read_text(encoding="utf-8")
+                    if html is None:
+                        try:
+                            html = fetcher.text(url)
+                        except FetchError as exc:
+                            # У части моделей страница за концом списка отдаёт 404,
+                            # у других — пустую 200. И то, и другое значит «конец».
+                            if "HTTP 404" in str(exc):
+                                print(f"  стр. {page_no}: 404 — конец списка")
+                                break
+                            raise
                     if section == "note":
                         items = parse.parse_listing(html)
                     elif section == "partsreview":
