@@ -14,6 +14,7 @@ import argparse
 import html
 import json
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -26,7 +27,7 @@ from minkara import urls  # noqa: E402
 from minkara.config import load_settings  # noqa: E402
 from minkara.db import Store  # noqa: E402
 
-KINDS = ("note", "parts", "review", "product")
+KINDS = ("note", "parts", "review", "product", "qa", "model")
 
 CSS = """
 :root { --fg:#1d1d1f; --muted:#6b7280; --bg:#fafafa; --card:#fff; --accent:#0a6cff; }
@@ -109,7 +110,14 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 """
 
-KIND_LABELS = {"note": "заметка", "parts": "запчасть", "review": "отзыв", "product": "товар"}
+KIND_LABELS = {
+    "note": "заметка",
+    "parts": "запчасть",
+    "review": "отзыв",
+    "product": "товар",
+    "qa": "вопрос",
+    "model": "модель",
+}
 KIND_LABELS_JS = json.dumps(KIND_LABELS, ensure_ascii=False)
 
 
@@ -138,6 +146,12 @@ def page_relpath(page) -> str:
         return f"reviews/{query.get('cid') or page['id']}.html"
     if kind == "product":
         return f"products/{query.get('pt') or page['id']}.html"
+    if kind == "qa":
+        match = re.search(r"/qa/unit(\d+)/", page["url"])
+        unit = match.group(1) if match else str(page["id"])
+        return f"qa/{page['brand']}-{page['model']}-{unit}.html"
+    if kind == "model":
+        return f"models/{page['brand']}-{page['model']}.html"
     return f"misc/{page['id']}.html"
 
 
@@ -356,11 +370,68 @@ def render_product(settings, page, meta, tr, path_map, lang) -> str:
     return layout(title_ru or title_ja, "".join(body), "../")
 
 
+def render_qa(settings, page, meta, tr, path_map, lang) -> str:
+    title_ru = tr.get(("title", 0))
+    title_ja = meta.get("title") or ""
+    body = [f"<h1>{esc(title_ru or title_ja)}</h1>"]
+    if title_ru and title_ja:
+        body.append(f"<div class='ja'>{esc(title_ja)}</div>")
+    bits = [meta.get("author"), meta.get("date"), f"ответов {len(meta.get('answers') or [])}"]
+    body.append(
+        "<div class='meta'>"
+        + "".join(f"<span>{esc(str(b))}</span>" for b in bits if b)
+        + "</div>"
+    )
+    body.append(
+        f"<div class='meta'><a class='external' href='{esc(page['url'])}'>"
+        "оригинал на minkara</a></div>"
+    )
+    body.append("<h2>Вопрос</h2>")
+    body.append(bilingual(tr.get(("qa", 1)), meta.get("question"), lang))
+    answers = meta.get("answers") or []
+    if answers:
+        body.append("<h2>Ответы</h2>")
+        for i, answer in enumerate(answers, start=2):
+            body.append(
+                "<div class='comment'><div class='who'>"
+                f"{esc(answer.get('author'))} · {esc(answer.get('date'))}</div>"
+                f"{bilingual(tr.get(('qa', i)), answer.get('text'), lang)}</div>"
+            )
+    for image in meta.get("images") or []:
+        media = ensure_media(settings, image)
+        if media:
+            body.append(f"<figure><img loading='lazy' src='../{esc(media)}' alt=''></figure>")
+    return layout(title_ru or title_ja, "".join(body), "../")
+
+
+def render_model(settings, page, meta, tr, path_map, lang) -> str:
+    title_ru = tr.get(("title", 0))
+    title_ja = meta.get("title") or ""
+    body = [f"<h1>{esc(title_ru or title_ja)}</h1>"]
+    if title_ru and title_ja:
+        body.append(f"<div class='ja'>{esc(title_ja)}</div>")
+    body.append(bilingual(tr.get(("description", 1)), meta.get("description"), lang))
+    body.append(
+        f"<div class='meta'><a class='external' href='{esc(page['url'])}'>"
+        "оригинал на minkara</a></div>"
+    )
+    links = meta.get("links") or {}
+    if links:
+        body.append("<h2>Разделы</h2>")
+        for name, href in links.items():
+            body.append(
+                f"<div class='card'><a class='external' href='{esc(href)}'>{esc(name)}</a></div>"
+            )
+    return layout(title_ru or title_ja, "".join(body), "../")
+
+
 RENDERERS = {
     "note": render_note,
     "parts": render_parts,
     "review": render_review,
     "product": render_product,
+    "qa": render_qa,
+    "model": render_model,
 }
 
 
@@ -374,8 +445,15 @@ def search_text(meta: dict, tr: dict) -> str:
         chunks.append(item.get("memo") or "")
     for value in (meta.get("sections") or {}).values():
         chunks.append(value or "")
+    if meta.get("question"):
+        chunks.append(meta["question"])
+    if meta.get("description"):
+        chunks.append(meta["description"])
+    for answer in meta.get("answers") or []:
+        chunks.append(answer.get("text") or "")
     for i in range(1, 20):
         chunks.append(tr.get(("review", i)) or "")
+        chunks.append(tr.get(("qa", i)) or "")
     for comment in meta.get("comments") or []:
         chunks.append(comment.get("text") or "")
     return " ".join(chunk for chunk in chunks if chunk)[:1000]
@@ -393,7 +471,8 @@ def render_index(entries: list[dict]) -> str:
         "<input id='q' type='search' placeholder='Поиск по заголовкам и тексту (ru/ja)'>"
         "<select id='kind'><option value=''>Все типы</option>"
         "<option value='note'>Заметки</option><option value='parts'>Запчасти</option>"
-        "<option value='review'>Отзывы</option><option value='product'>Товары</option></select>"
+        "<option value='review'>Отзывы</option><option value='product'>Товары</option>"
+        "<option value='qa'>Вопросы</option><option value='model'>Модели</option></select>"
         "<select id='model'><option value=''>Все модели</option></select>"
         "<select id='gen'><option value=''>Все поколения</option>"
         "<option value='1'>1-е</option><option value='2'>2-е</option>"

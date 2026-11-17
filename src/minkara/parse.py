@@ -409,6 +409,85 @@ def parse_review(html: str, url: str = "") -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
+# Q&A и страницы моделей
+# --------------------------------------------------------------------------
+
+
+def parse_qa_listing(html: str) -> list[dict[str, Any]]:
+    soup = soup_of(html)
+    items: list[dict[str, Any]] = []
+    for li in soup.select("li.question-list__list"):
+        link = li.select_one("h3.question-list__list__head__title a")
+        if link is None or not link.get("href"):
+            continue
+        items.append(
+            {
+                "url": link["href"],
+                "title": _text(link),
+                "answers": _int(_text(li.select_one(".question-list__list__head__answer"))),
+                "category": _text(li.select_one(".question-list__list__cat-name")).strip("[]"),
+                "text": _text(li.select_one(".question-list__list__content__text")),
+                "date": _text(li.select_one(".question-list__list__content__data")),
+                "author": _text(li.select_one(".question-list__list__content__name a")),
+            }
+        )
+    return items
+
+
+def parse_qa(html: str, url: str = "") -> dict[str, Any]:
+    soup = soup_of(html)
+    question = soup.select_one("div.qa2.question")
+    body = question.find_next_sibling("div", class_="text") if question else None
+    answers = []
+    for li in soup.select("ul.a-list2 > li"):
+        head = li.select_one("div.qa2.answer2")
+        if head is None:
+            continue
+        text = head.find_next_sibling("div", class_="text")
+        answers.append(
+            {
+                "author": _text(head.select_one(".name a")),
+                "date": _text(head.select_one(".date")),
+                "text": _text_br(text),
+            }
+        )
+    images = []
+    for img in soup.select('img[src*="cdn.snsimg"]'):
+        src = img.get("src") or ""
+        if "/User/" not in src and src not in images:
+            images.append(src)
+    return {
+        "url": url,
+        "title": _text(question.select_one("h2.ttl")) if question else "",
+        "author": _text(question.select_one(".name a")) if question else "",
+        "date": _text(question.select_one(".date")) if question else "",
+        "question": _text_br(body),
+        "answers": answers,
+        "images": images,
+    }
+
+
+def parse_model(html: str, url: str = "") -> dict[str, Any]:
+    soup = soup_of(html)
+    title = _text(soup.select_one("h1")) or _text(soup.select_one("title"))
+    description = ""
+    meta = soup.select_one('meta[name="description"]')
+    if meta is not None:
+        description = meta.get("content") or ""
+    links = {}
+    for section in ("note", "partsreview", "review", "qa"):
+        link = soup.select_one(f'a[href*="/{section}/"]')
+        if link is not None and link.get("href"):
+            links[section] = link["href"]
+    return {
+        "url": url,
+        "title": title,
+        "description": description,
+        "links": links,
+    }
+
+
+# --------------------------------------------------------------------------
 # Единицы перевода
 # --------------------------------------------------------------------------
 
@@ -444,5 +523,18 @@ def extract_text_units(parsed: dict[str, Any], kind: str) -> list[dict[str, Any]
     elif kind == "product":
         if parsed.get("title"):
             units.append({"kind": "title", "idx": 0, "ja": parsed["title"]})
+    elif kind == "qa":
+        if parsed.get("title"):
+            units.append({"kind": "title", "idx": 0, "ja": parsed["title"]})
+        if parsed.get("question"):
+            units.append({"kind": "qa", "idx": 1, "ja": parsed["question"]})
+        for i, answer in enumerate(parsed.get("answers") or [], start=2):
+            if answer.get("text"):
+                units.append({"kind": "qa", "idx": i, "ja": answer["text"]})
+    elif kind == "model":
+        if parsed.get("title"):
+            units.append({"kind": "title", "idx": 0, "ja": parsed["title"]})
+        if parsed.get("description"):
+            units.append({"kind": "description", "idx": 1, "ja": parsed["description"]})
     # Числа, латиница и пустые строки переводить не нужно.
     return [unit for unit in units if CJK_RE.search(unit["ja"])]

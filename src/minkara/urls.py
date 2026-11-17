@@ -91,6 +91,7 @@ def classify(url: str) -> dict:
     m = _QA_RE.match(path)
     if m:
         info.update(kind="qa", **m.groupdict())
+        info["pn"] = int(dict(parse_qsl(parts.query)).get("pn") or 1)
         return info
     m = _LISTING_RE.match(path)
     if m and m.group("section") in SECTIONS:
@@ -126,7 +127,9 @@ def raw_relpath(info: dict) -> str:
     if kind == "review":
         return f"car/{info['brand']}/{info['model']}/review/{info.get('cid')}.html"
     if kind == "qa":
-        return f"car/{info['brand']}/{info['model']}/qa/unit{info['unit']}.html"
+        pn = info.get("pn") or 1
+        suffix = "" if pn <= 1 else f"-p{pn}"
+        return f"car/{info['brand']}/{info['model']}/qa/unit{info['unit']}{suffix}.html"
     if kind == "model":
         return f"car/{info['brand']}/{info['model']}/index.html"
     digest = hashlib.sha1(info["url"].encode()).hexdigest()[:16]

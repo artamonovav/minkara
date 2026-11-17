@@ -84,6 +84,16 @@ def main() -> int:
     started = time.monotonic()
     try:
         for model in models:
+            model_url = urls.canonical(
+                f"{settings.base_url}/car/{model.brand}/{model.key}/"
+            )
+            store.upsert_page(
+                model_url,
+                kind="model",
+                brand=model.brand,
+                model=model.key,
+                section="model",
+            )
             for section in section_names:
                 combo_index += 1
                 if section not in sections:
@@ -93,7 +103,7 @@ def main() -> int:
                         flush=True,
                     )
                     continue
-                if section not in ("note", "partsreview", "review"):
+                if section not in ("note", "partsreview", "review", "qa"):
                     print(
                         f"[{combo_index}/{total_combos}] ! {model.key}/{section}: "
                         "раздел пока не поддержан — пропуск",
@@ -139,8 +149,10 @@ def main() -> int:
                         items = parse.parse_listing(html)
                     elif section == "partsreview":
                         items = parse.parse_product_listing(html)
-                    else:
+                    elif section == "review":
                         items = parse.parse_review_listing(html)
+                    else:
+                        items = parse.parse_qa_listing(html)
                     rel = save_raw(settings, info, html)
                     store.upsert_page(
                         url,
@@ -202,6 +214,15 @@ def main() -> int:
                                 brand=model.brand,
                                 model=model.key,
                                 section="review",
+                                title=item["title"],
+                            )
+                        elif section == "qa" and item_info["kind"] == "qa":
+                            store.upsert_page(
+                                item_url,
+                                kind="qa",
+                                brand=model.brand,
+                                model=model.key,
+                                section="qa",
                                 title=item["title"],
                             )
                     total_items += len(items)

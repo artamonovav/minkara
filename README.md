@@ -46,6 +46,7 @@ Yahoo! JAPAN). Заголовки (`Accept-Language` и пр.) больше не
 │   ├── 05_glossary.py         # глоссарий терминов через DeepL
 │   ├── crawl_all.sh           # полная выкачка по стадиям (лог в work/)
 │   ├── translate_all.sh       # DeepL для длинных + Google + пост-редактирование
+│   ├── status.py              # сводка: этап, БД, квота, диск
 │   ├── serve.py               # локальный просмотр (опционально)
 │   ├── setup.sh               # установка окружения и MCP
 │   └── setup_mcp.py           # настройка mcp.servers в opencode.json
@@ -76,6 +77,18 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 cp config/settings.example.env config/settings.local.env
+```
+
+## Управление
+
+```bash
+make status      # этап выкачки, прогресс, БД, квота DeepL, диск
+make crawl       # полная выкачка
+make translate   # перевод
+make build       # сборка сайта
+make serve       # локальный сервер
+make test        # тесты
+make lint        # ruff
 ```
 
 ## Быстрый старт

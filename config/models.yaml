@@ -44,5 +44,5 @@ sections:
     enabled: false
     title: フォト
   qa:
-    enabled: false
+    enabled: true
     title: Q&A

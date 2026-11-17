@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -34,6 +35,8 @@ PARSERS = {
     "parts": parse.parse_parts,
     "review": parse.parse_review,
     "product": parse.parse_product,
+    "qa": parse.parse_qa,
+    "model": parse.parse_model,
     "car": parse.parse_profile,
 }
 
@@ -127,6 +130,31 @@ def fetch_cars(store: Store, settings, fetcher: Fetcher, rules: dict, limit: int
     return done
 
 
+def _enrich_qa(settings, fetcher: Fetcher, url: str, html: str, parsed: dict) -> dict:
+    """Докачивает страницы ответов Q&A (?pn=2,3,…) и склеивает их."""
+    pages = sorted({int(value) for value in re.findall(r"[?&]pn=(\d+)", html)})
+    seen = {
+        (answer.get("author"), answer.get("date"), answer.get("text"))
+        for answer in parsed.get("answers") or []
+    }
+    for pn in pages[:10]:
+        separator = "&" if "?" in url else "?"
+        sub_url = f"{url}{separator}pn={pn}"
+        try:
+            sub_html = fetcher.text(sub_url)
+        except FetchError:
+            continue
+        sub_info = urls.classify(sub_url)
+        save_raw(settings, sub_info, sub_html)
+        extra = parse.parse_qa(sub_html, sub_url)
+        for answer in extra.get("answers") or []:
+            key = (answer.get("author"), answer.get("date"), answer.get("text"))
+            if key not in seen:
+                seen.add(key)
+                parsed.setdefault("answers", []).append(answer)
+    return parsed
+
+
 def fetch_one_page(settings, fetcher: Fetcher, page) -> tuple:
     """Сетевой этап одного URL; БД не трогает, поэтому безопасен в потоках."""
     url = page["url"]
@@ -135,6 +163,8 @@ def fetch_one_page(settings, fetcher: Fetcher, page) -> tuple:
         info = urls.classify(url)
         rel = save_raw(settings, info, html)
         parsed = parse_page(page["kind"], html, url)
+        if page["kind"] == "qa":
+            parsed = _enrich_qa(settings, fetcher, url, html, parsed)
         return page, rel, parsed, None
     except FetchError as exc:
         return page, None, None, str(exc)

@@ -1,0 +1,40 @@
+PY ?= .venv/bin/python
+
+.PHONY: help setup status crawl translate build serve test lint clean
+
+help:
+	@echo "make setup      — окружение, зависимости, MCP"
+	@echo "make status     — состояние архива"
+	@echo "make crawl      — полная выкачка"
+	@echo "make translate  — перевод (DeepL + Google + fix-bad)"
+	@echo "make build      — сборка офлайн-сайта"
+	@echo "make serve      — локальный сервер"
+	@echo "make test       — тесты"
+	@echo "make lint       — ruff"
+
+setup:
+	bash scripts/setup.sh
+
+status:
+	$(PY) scripts/status.py
+
+crawl:
+	bash scripts/crawl_all.sh
+
+translate:
+	bash scripts/translate_all.sh
+
+build:
+	$(PY) scripts/04_build.py
+
+serve:
+	$(PY) scripts/serve.py
+
+test:
+	$(PY) -m pytest -q
+
+lint:
+	$(PY) -m ruff check src scripts tests
+
+clean:
+	rm -rf out/site work/*.log work/*.run.sh

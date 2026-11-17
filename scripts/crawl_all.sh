@@ -66,23 +66,23 @@ if [ -f "$DISCOVER_MARKER" ] && [ "${MINKARA_REFRESH:-0}" != "1" ]; then
   say "1/7 discover пропущен: есть маркер $DISCOVER_MARKER"
   say "    (MINKARA_REFRESH=1 или удалить маркер — чтобы обойти листинги заново)"
 else
-  say "1/7 discover (note, partsreview, review)"
+  say "1/7 discover (note, partsreview, review, qa)"
   "$PY" scripts/01_discover.py --brand honda "${MODELS_ARG[@]}" \
-    --sections note,partsreview,review
+    --sections note,partsreview,review,qa
   touch "$DISCOVER_MARKER"
   say "discover завершён, маркер создан"
 fi
 
-say "2/7 fetch: машины + заметки (workers=${WORKERS}, delay=${PAGE_DELAY})"
-"$PY" scripts/02_fetch.py --kind note --no-assets \
+say "2/7 fetch: машины, заметки, страницы моделей (workers=${WORKERS}, delay=${PAGE_DELAY})"
+"$PY" scripts/02_fetch.py --kind note,model --no-assets \
   --workers "$WORKERS" --delay "$PAGE_DELAY"
 
 say "3/7 fetch: товары (регистрируют отзывы)"
 "$PY" scripts/02_fetch.py --kind product --no-assets \
   --workers "$WORKERS" --delay "$PAGE_DELAY"
 
-say "4/7 fetch: отзывы о запчастях и об авто"
-"$PY" scripts/02_fetch.py --kind parts,review --no-assets \
+say "4/7 fetch: отзывы о запчастях, об авто и Q&A"
+"$PY" scripts/02_fetch.py --kind parts,review,qa --no-assets \
   --workers "$WORKERS" --delay "$PAGE_DELAY"
 
 say "5/7 медиа (workers=${ASSET_WORKERS}, delay=${ASSET_DELAY})"
