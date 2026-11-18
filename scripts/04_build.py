@@ -185,6 +185,36 @@ def layout(title: str, body: str, depth: str = "") -> str:
     )
 
 
+def nav_links(nav: dict | None) -> str:
+    if not nav:
+        return ""
+    links = []
+    if nav.get("prev"):
+        links.append(f"<a href='../{esc(nav['prev'])}'>← Предыдущая</a>")
+    if nav.get("next"):
+        links.append(f"<a href='../{esc(nav['next'])}'>Следующая →</a>")
+    if not links:
+        return ""
+    return "<div class='meta' style='margin-top:2em'>" + " · ".join(links) + "</div>"
+
+
+def note_nav(settings, meta: dict, path_map: dict, global_nav: dict | None) -> dict:
+    """Приоритет — ссылки из карточки, если они есть в архиве; иначе соседи
+    по общему индексу. Так «предыдущая» и «следующая» есть всегда."""
+    result: dict[str, str] = {}
+    for key in ("prev", "next"):
+        target = meta.get(key)
+        if target:
+            absolute = urls.canonical(urls.absolute(settings.base_url, target))
+            local = path_map.get(absolute)
+            if local:
+                result[key] = local
+                continue
+        if global_nav and global_nav.get(key):
+            result[key] = global_nav[key]
+    return result
+
+
 def bilingual(ru_text: str | None, ja_text: str | None, lang: str) -> str:
     parts = []
     if ru_text and lang != "ja":
@@ -194,7 +224,7 @@ def bilingual(ru_text: str | None, ja_text: str | None, lang: str) -> str:
     return "".join(parts)
 
 
-def render_note(settings, page, meta, tr, path_map, lang) -> str:
+def render_note(settings, page, meta, tr, path_map, lang, nav=None) -> str:
     title_ru = tr.get(("title", 0))
     title_ja = meta.get("title") or ""
     body = [f"<h1>{esc(title_ru or title_ja)}</h1>"]
@@ -244,23 +274,11 @@ def render_note(settings, page, meta, tr, path_map, lang) -> str:
                 f"{bilingual(tr.get(('comment', i)), comment.get('text'), lang)}</div>"
             )
 
-    nav = []
-    for key, label in (("prev", "← Предыдущая"), ("next", "Следующая →")):
-        target = meta.get(key)
-        if not target:
-            continue
-        absolute = urls.canonical(urls.absolute(settings.base_url, target))
-        local = path_map.get(absolute)
-        if local:
-            nav.append(f"<a href='../{esc(local)}'>{label}</a>")
-        else:
-            nav.append(f"<a class='external' href='{esc(absolute)}'>{label}</a>")
-    if nav:
-        body.append("<div class='meta' style='margin-top:2em'>" + " · ".join(nav) + "</div>")
+    body.append(nav_links(nav))
     return layout(title_ru or title_ja, "".join(body), "../")
 
 
-def render_parts(settings, page, meta, tr, path_map, lang) -> str:
+def render_parts(settings, page, meta, tr, path_map, lang, nav=None) -> str:
     title_ru = tr.get(("title", 0))
     title_ja = meta.get("title") or ""
     body = [f"<h1>{esc(title_ru or title_ja)}</h1>"]
@@ -290,10 +308,11 @@ def render_parts(settings, page, meta, tr, path_map, lang) -> str:
     if media:
         body.append(f"<figure><img loading='lazy' src='../{esc(media)}' alt=''></figure>")
     body.append(bilingual(tr.get(("review", 1)), meta.get("text"), lang))
+    body.append(nav_links(nav))
     return layout(title_ru or title_ja, "".join(body), "../")
 
 
-def render_review(settings, page, meta, tr, path_map, lang) -> str:
+def render_review(settings, page, meta, tr, path_map, lang, nav=None) -> str:
     title_ru = tr.get(("title", 0))
     title_ja = meta.get("title") or ""
     body = [f"<h1>{esc(title_ru or title_ja)}</h1>"]
@@ -337,10 +356,11 @@ def render_review(settings, page, meta, tr, path_map, lang) -> str:
             f"<div class='meta'><a class='external' href='{esc(meta['related_url'])}'>"
             "связанная запись</a></div>"
         )
+    body.append(nav_links(nav))
     return layout(title_ru or title_ja, "".join(body), "../")
 
 
-def render_product(settings, page, meta, tr, path_map, lang) -> str:
+def render_product(settings, page, meta, tr, path_map, lang, nav=None) -> str:
     title_ru = tr.get(("title", 0))
     title_ja = meta.get("title") or ""
     body = [f"<h1>{esc(title_ru or title_ja)}</h1>"]
@@ -372,10 +392,11 @@ def render_product(settings, page, meta, tr, path_map, lang) -> str:
                     f"<div class='card'><a class='external' href='{esc(absolute)}'>"
                     "отзыв на minkara</a></div>"
                 )
+    body.append(nav_links(nav))
     return layout(title_ru or title_ja, "".join(body), "../")
 
 
-def render_qa(settings, page, meta, tr, path_map, lang) -> str:
+def render_qa(settings, page, meta, tr, path_map, lang, nav=None) -> str:
     title_ru = tr.get(("title", 0))
     title_ja = meta.get("title") or ""
     body = [f"<h1>{esc(title_ru or title_ja)}</h1>"]
@@ -406,10 +427,11 @@ def render_qa(settings, page, meta, tr, path_map, lang) -> str:
         media = ensure_media(settings, image)
         if media:
             body.append(f"<figure><img loading='lazy' src='../{esc(media)}' alt=''></figure>")
+    body.append(nav_links(nav))
     return layout(title_ru or title_ja, "".join(body), "../")
 
 
-def render_model(settings, page, meta, tr, path_map, lang, related=None) -> str:
+def render_model(settings, page, meta, tr, path_map, lang, related=None, nav=None) -> str:
     title_ru = tr.get(("title", 0))
     title_ja = meta.get("title") or ""
     body = [f"<h1>{esc(title_ru or title_ja)}</h1>"]
@@ -444,6 +466,7 @@ def render_model(settings, page, meta, tr, path_map, lang, related=None) -> str:
                 f"<div class='meta'>… и ещё {len(items) - 100}; полный список — в "
                 "<a href='../index.html'>общем индексе</a></div>"
             )
+    body.append(nav_links(nav))
     return layout(title_ru or title_ja, "".join(body), "../")
 
 
@@ -559,11 +582,29 @@ def main() -> int:
     for entry in entries:
         by_model.setdefault(entry["m"], []).append(entry)
 
+    nav_by_kind: dict[str, dict] = {}
+    for kind in KINDS:
+        items = [entry for entry in entries if entry["k"] == kind]
+        nav: dict[str, dict] = {}
+        for index, entry in enumerate(items):
+            nav[entry["u"]] = {
+                "prev": items[index - 1]["u"] if index > 0 else None,
+                "next": items[index + 1]["u"] if index + 1 < len(items) else None,
+            }
+        nav_by_kind[kind] = nav
+
     built = 0
     for page, meta, tr in records:
         renderer = RENDERERS.get(page["kind"])
         if renderer is None:
             continue
+        rel = page_relpath(page)
+        global_nav = nav_by_kind.get(page["kind"], {}).get(rel)
+        nav = (
+            note_nav(settings, meta, path_map, global_nav)
+            if page["kind"] == "note"
+            else global_nav
+        )
         if page["kind"] == "model":
             html_text = renderer(
                 settings,
@@ -573,9 +614,10 @@ def main() -> int:
                 path_map,
                 args.lang,
                 related=by_model.get(page["model"] or "", []),
+                nav=nav,
             )
         else:
-            html_text = renderer(settings, page, meta, tr, path_map, args.lang)
+            html_text = renderer(settings, page, meta, tr, path_map, args.lang, nav=nav)
         target = settings.site_dir / page_relpath(page)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(html_text, encoding="utf-8")
