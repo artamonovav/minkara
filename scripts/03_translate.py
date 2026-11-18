@@ -87,7 +87,7 @@ class GoogleWebTranslator:
     name = "google"
     endpoint = "https://translate.googleapis.com/translate_a/single"
 
-    def _request(self, text: str) -> str:
+    def _request_gtx(self, text: str) -> str:
         query = urllib.parse.urlencode(
             {"client": "gtx", "sl": "ja", "tl": "ru", "dt": "t", "q": text}
         )
@@ -98,6 +98,29 @@ class GoogleWebTranslator:
         with urllib.request.urlopen(request, timeout=30) as response:
             data = json.loads(response.read().decode("utf-8"))
         return "".join(part[0] for part in data[0] if part and part[0])
+
+    def _request_clients5(self, text: str) -> str:
+        """Запасной эндпоинт Google с отдельной квотой."""
+        query = urllib.parse.urlencode(
+            {"client": "dict-chrome-ex", "sl": "ja", "tl": "ru", "q": text}
+        )
+        request = urllib.request.Request(
+            f"https://clients5.google.com/translate_a/t?{query}",
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        if isinstance(data, list):
+            return "".join(str(part) for part in data)
+        return str(data)
+
+    def _request(self, text: str) -> str:
+        try:
+            return self._request_gtx(text)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 429:
+                raise
+            return self._request_clients5(text)
 
     SEP = "\n\n---\n\n"
     MAX_BATCH = 30
@@ -373,7 +396,7 @@ def sync_units(store: Store) -> int:
     """Переносит тексты из meta_json в text_units (идемпотентно)."""
     store.purge_non_japanese()
     total = 0
-    for kind in ("note", "parts", "review", "product"):
+    for kind in ("note", "parts", "review", "product", "qa", "model"):
         for page in store.parsed_pages(kind):
             meta = json.loads(page["meta_json"])
             for unit in parse.extract_text_units(meta, kind):
