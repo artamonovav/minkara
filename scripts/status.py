@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -41,13 +42,26 @@ def human_bytes(value: int) -> str:
     return f"{size:.1f} ГБ"
 
 
-def dir_size(path: Path) -> int:
-    total = 0
-    if path.exists():
-        for item in path.rglob("*"):
-            if item.is_file():
-                total += item.stat().st_size
-    return total
+def dir_size(path: Path) -> str:
+    """Быстрый размер каталога через du (рекурсивный обход на Python
+    на десятках гигабайт занимает минуты)."""
+    if not path.exists():
+        return "—"
+    try:
+        result = subprocess.run(
+            ["du", "-sh", str(path)], capture_output=True, text=True, timeout=20
+        )
+        return result.stdout.split()[0] if result.stdout else "—"
+    except Exception:
+        return "—"
+
+
+def free_space(path: Path) -> str:
+    try:
+        usage = shutil.disk_usage(path)
+        return human_bytes(usage.free)
+    except Exception:
+        return "—"
 
 
 def main() -> int:
@@ -108,8 +122,9 @@ def main() -> int:
         "translation": {"done": units_done, "total": units_total},
         "deepl": quota,
         "disk": {
-            "data": human_bytes(dir_size(settings.data_dir)),
-            "out": human_bytes(dir_size(settings.out_dir)),
+            "data": dir_size(settings.data_dir),
+            "out": dir_size(settings.out_dir),
+            "free": free_space(settings.root),
         },
     }
 
@@ -136,7 +151,10 @@ def main() -> int:
             f"DeepL:       остаток {quota['remaining']} из {quota['limit']} "
             f"(использовано {quota['used']})"
         )
-    print(f"Диск:        data {data['disk']['data']}, out {data['disk']['out']}")
+    print(
+        f"Диск:        data {data['disk']['data']}, out {data['disk']['out']}, "
+        f"свободно {data['disk']['free']}"
+    )
     return 0
 
 

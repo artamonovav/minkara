@@ -181,6 +181,17 @@ def layout(title: str, body: str, depth: str = "") -> str:
         f"<header><a href='{depth}index.html'>← Все материалы</a></header>"
         f"<div class='wrap'>{body}</div>"
         "<footer>Личный офлайн-архив. Контент принадлежит авторам и Carview.</footer>"
+        "<script>"
+        "document.addEventListener('keydown', function (e) {"
+        "  if (!e.ctrlKey || e.altKey || e.metaKey) return;"
+        "  var tag = (e.target.tagName || '').toLowerCase();"
+        "  if (tag === 'input' || tag === 'textarea' || tag === 'select') return;"
+        "  var link = null;"
+        "  if (e.key === 'ArrowLeft') link = document.getElementById('nav-prev');"
+        "  if (e.key === 'ArrowRight') link = document.getElementById('nav-next');"
+        "  if (link) { e.preventDefault(); window.location.href = link.getAttribute('href'); }"
+        "});"
+        "</script>"
         "</body></html>"
     )
 
@@ -190,9 +201,13 @@ def nav_links(nav: dict | None) -> str:
         return ""
     links = []
     if nav.get("prev"):
-        links.append(f"<a href='../{esc(nav['prev'])}'>← Предыдущая</a>")
+        links.append(
+            f"<a id='nav-prev' title='Ctrl+←' href='../{esc(nav['prev'])}'>← Предыдущая</a>"
+        )
     if nav.get("next"):
-        links.append(f"<a href='../{esc(nav['next'])}'>Следующая →</a>")
+        links.append(
+            f"<a id='nav-next' title='Ctrl+→' href='../{esc(nav['next'])}'>Следующая →</a>"
+        )
     if not links:
         return ""
     return "<div class='meta' style='margin-top:2em'>" + " · ".join(links) + "</div>"

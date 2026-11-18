@@ -99,24 +99,76 @@ class GoogleWebTranslator:
             data = json.loads(response.read().decode("utf-8"))
         return "".join(part[0] for part in data[0] if part and part[0])
 
+    SEP = "\n\n---\n\n"
+    MAX_BATCH = 30
+    MAX_CHARS = 3500
+
     def _one(self, text: str) -> str:
         last_error: Exception | None = None
-        for attempt in range(3):
+        for attempt in range(4):
             try:
                 return "".join(self._request(chunk) for chunk in _chunks(text))
-            except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+            except urllib.error.HTTPError as exc:
+                last_error = exc
+                if exc.code == 429:
+                    # Google режет частоту: ждём и пробуем снова.
+                    time.sleep(30 * (attempt + 1))
+                    continue
+                time.sleep(2**attempt)
+            except (urllib.error.URLError, TimeoutError) as exc:
                 last_error = exc
                 time.sleep(2**attempt)
         raise RuntimeError(f"Google Translate: {last_error}")
 
+    def _batch(self, texts: list[str]) -> list[str] | None:
+        joined = self.SEP.join(texts)
+        if len(joined) > 4500:
+            return None
+        output = self._one(joined)
+        parts = [part.strip() for part in re.split(r"\n\s*---\s*\n", output)]
+        if len(parts) != len(texts):
+            return None
+        return parts
+
     def translate(self, texts: list[str]) -> list[str]:
-        result = []
-        for text in texts:
+        result = [""] * len(texts)
+        index = 0
+        while index < len(texts):
+            text = texts[index]
             if not text.strip():
-                result.append("")
+                index += 1
                 continue
-            result.append(self._one(text))
-            time.sleep(0.25)
+            if len(text) > 1500:
+                result[index] = self._one(text)
+                index += 1
+                time.sleep(0.8)
+                continue
+
+            batch: list[tuple[int, str]] = []
+            size = 0
+            while index < len(texts) and len(batch) < self.MAX_BATCH:
+                candidate = texts[index]
+                if not candidate.strip():
+                    index += 1
+                    continue
+                if batch and size + len(candidate) > self.MAX_CHARS:
+                    break
+                batch.append((index, candidate))
+                size += len(candidate)
+                index += 1
+
+            if not batch:
+                continue
+            parts = self._batch([item[1] for item in batch])
+            if parts is None:
+                # Разделитель не пережил перевод — переводим поштучно.
+                for position, source in batch:
+                    result[position] = self._one(source)
+                    time.sleep(0.5)
+            else:
+                for (position, _), value in zip(batch, parts, strict=False):
+                    result[position] = value
+            time.sleep(0.8)
         return result
 
 
