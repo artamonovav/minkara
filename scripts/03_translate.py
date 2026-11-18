@@ -115,12 +115,13 @@ class GoogleWebTranslator:
         return str(data)
 
     def _request(self, text: str) -> str:
+        # clients5 сейчас стабильнее; gtx — запасной.
         try:
-            return self._request_gtx(text)
+            return self._request_clients5(text)
         except urllib.error.HTTPError as exc:
             if exc.code != 429:
                 raise
-            return self._request_clients5(text)
+            return self._request_gtx(text)
 
     SEP = "\n\n---\n\n"
     MAX_BATCH = 30
