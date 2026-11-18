@@ -1,6 +1,6 @@
 PY ?= .venv/bin/python
 
-.PHONY: help setup status report crawl translate build serve test lint clean
+.PHONY: help setup status report crawl translate build serve test lint optimize clean
 
 help:
 	@echo "make setup      — окружение, зависимости, MCP"
@@ -9,6 +9,7 @@ help:
 	@echo "make crawl      — полная выкачка"
 	@echo "make translate  — перевод (DeepL + Google + fix-bad)"
 	@echo "make build      — сборка офлайн-сайта"
+	@echo "make optimize   — сжатие HTML, дедуп медиа, VACUUM"
 	@echo "make serve      — локальный сервер"
 	@echo "make test       — тесты"
 	@echo "make lint       — ruff"
@@ -30,6 +31,9 @@ translate:
 
 build:
 	$(PY) scripts/04_build.py
+
+optimize:
+	$(PY) scripts/optimize.py --compress-raw --dedupe-assets --hardlink-out --vacuum
 
 serve:
 	$(PY) scripts/serve.py

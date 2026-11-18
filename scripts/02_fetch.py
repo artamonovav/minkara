@@ -29,6 +29,7 @@ from minkara.config import (  # noqa: E402
 from minkara.db import Store  # noqa: E402
 from minkara.http import BlockedError, Fetcher, FetchError  # noqa: E402
 from minkara.progress import Progress  # noqa: E402
+from minkara.storage import read_text as read_raw  # noqa: E402
 
 PARSERS = {
     "note": parse.parse_note,
@@ -315,9 +316,10 @@ def reparse(store: Store, settings) -> int:
     ).fetchall()
     for page in rows:
         path = settings.raw_dir / page["file"]
-        if not path.exists():
+        try:
+            html = read_raw(path)
+        except FileNotFoundError:
             continue
-        html = path.read_text(encoding="utf-8")
         parsed = parse_page(page["kind"], html, page["url"])
         store.set_page(
             page["id"],

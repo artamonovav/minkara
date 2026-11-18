@@ -19,6 +19,7 @@ from minkara import parse, urls  # noqa: E402
 from minkara.config import load_models, load_sections, load_settings, selected_models  # noqa: E402
 from minkara.db import Store  # noqa: E402
 from minkara.http import BlockedError, Fetcher, FetchError  # noqa: E402
+from minkara.storage import read_text as read_raw  # noqa: E402
 
 
 def save_raw(settings, info: dict, html: str) -> str:
@@ -133,8 +134,10 @@ def main() -> int:
                         and not args.fresh
                     ):
                         cached = settings.raw_dir / existing["file"]
-                        if cached.exists():
-                            html = cached.read_text(encoding="utf-8")
+                        try:
+                            html = read_raw(cached)
+                        except FileNotFoundError:
+                            html = None
                     if html is None:
                         try:
                             html = fetcher.text(url)
