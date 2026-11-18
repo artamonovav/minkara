@@ -91,7 +91,8 @@ function render() {
       .filter(Boolean).map(escapeHtml).join(" · ");
     const badge = it.k ? '<span class="badge">' +
       escapeHtml(KIND_LABELS[it.k] || it.k) + "</span>" : "";
-    return '<div class="card"><a href="' + it.u + '">' + badge +
+    const suffix = state.gen ? '#nav=gen' : (state.model ? '#nav=model' : '');
+    return '<div class="card"><a href="' + it.u + suffix + '">' + badge +
       '<span class="ru">' + escapeHtml(title) + "</span></a>" + sub +
       '<div class="meta">' + meta + "</div></div>";
   }).join("");
@@ -196,6 +197,146 @@ def layout(title: str, body: str, depth: str = "") -> str:
     )
 
 
+def note_order(records: list[tuple], base_url: str) -> list[str]:
+    """Единый линейный порядок заметок без циклов.
+
+    Внутри каждой машины сохраняем исходную цепочку prev/next, затем
+    склеиваем машины в стабильном порядке. Если в исходных данных есть
+    цикл или обрыв, оставшиеся записи добавляются по id — циклов не будет.
+    """
+    groups: dict[tuple, list] = {}
+    for page, meta, _tr in records:
+        if page["kind"] != "note":
+            continue
+        car = page["car"] if page["car"] is not None else -int(page["id"])
+        groups.setdefault((page["model"] or "", car), []).append((page, meta))
+
+    ordered: list[str] = []
+    for key in sorted(groups, key=lambda item: (item[0], item[1])):
+        items = groups[key]
+        url_set = {page["url"] for page, _ in items}
+        id_by_url = {page["url"]: int(page["id"]) for page, _ in items}
+        next_map: dict[str, str] = {}
+        prev_map: dict[str, str] = {}
+        for page, meta in items:
+            url = page["url"]
+            target = meta.get("next")
+            if target:
+                absolute = urls.canonical(urls.absolute(base_url, target))
+                if absolute in url_set and absolute != url:
+                    next_map[url] = absolute
+            target = meta.get("prev")
+            if target:
+                absolute = urls.canonical(urls.absolute(base_url, target))
+                if absolute in url_set and absolute != url:
+                    prev_map[url] = absolute
+
+        starts = sorted(
+            (url for url in url_set if url not in prev_map),
+            key=lambda url: id_by_url[url],
+        )
+        if not starts:
+            starts = [min(url_set, key=lambda url: id_by_url[url])]
+
+        visited: set[str] = set()
+        for start in starts:
+            current = start
+            while current and current not in visited:
+                visited.add(current)
+                ordered.append(current)
+                current = next_map.get(current)
+
+        leftovers = sorted(
+            (url for url in url_set if url not in visited),
+            key=lambda url: id_by_url[url],
+        )
+        ordered.extend(leftovers)
+    return ordered
+
+
+def nav_from_order(ordered: list[str]) -> dict:
+    nav: dict[str, dict] = {}
+    for index, rel in enumerate(ordered):
+        nav[rel] = {
+            "prev": ordered[index - 1] if index > 0 else None,
+            "next": ordered[index + 1] if index + 1 < len(ordered) else None,
+        }
+    return nav
+
+
+NAV_SCRIPT = """<script>
+window.MINKARA_NAV = __NAV__;
+(function () {
+  function apply() {
+    var match = location.hash.match(/^#nav=(all|model|gen)/);
+    var key = match ? match[1] : 'all';
+    var nav = window.MINKARA_NAV[key] || window.MINKARA_NAV.all || {};
+    var prev = document.getElementById('nav-prev');
+    var next = document.getElementById('nav-next');
+    if (prev) {
+      if (nav.prev) { prev.style.display = 'inline'; prev.setAttribute('href', '../' + nav.prev); }
+      else { prev.style.display = 'none'; }
+    }
+    if (next) {
+      if (nav.next) { next.style.display = 'inline'; next.setAttribute('href', '../' + nav.next); }
+      else { next.style.display = 'none'; }
+    }
+    document.querySelectorAll('#nav-switch a').forEach(function (a) {
+      a.style.fontWeight = a.getAttribute('href') === '#nav=' + key ? 'bold' : 'normal';
+    });
+  }
+  window.addEventListener('hashchange', apply);
+  apply();
+})();
+</script>"""
+
+
+def inject_nav(html_text: str, variants: dict) -> str:
+    switch = (
+        "<div class='meta' id='nav-switch'>Навигация: "
+        "<a href='#nav=all'>все</a> · "
+        "<a href='#nav=model'>модель</a> · "
+        "<a href='#nav=gen'>поколение</a></div>"
+    )
+    script = NAV_SCRIPT.replace("__NAV__", json.dumps(variants, ensure_ascii=False))
+    return html_text.replace("</body>", switch + script + "</body>")
+
+
+def owner_block(page) -> str:
+    uid = page["uid"]
+    if not uid:
+        return ""
+    links = []
+    if page["car"]:
+        links.append(
+            f"<a href='../cars/{uid}-{page['car']}.html'>Все материалы этой машины</a>"
+        )
+    links.append(f"<a href='../authors/{uid}.html'>Все материалы автора</a>")
+    return "<div class='meta'>" + " · ".join(links) + "</div>"
+
+
+def render_hub(title: str, items: list[dict]) -> str:
+    body = [f"<h1>{esc(title)}</h1>"]
+    groups: dict[str, list[dict]] = {}
+    for item in items:
+        groups.setdefault(item["k"], []).append(item)
+    for kind in ("note", "review", "qa", "parts", "product"):
+        group = groups.get(kind)
+        if not group:
+            continue
+        body.append(f"<h2>{esc(KIND_LABELS.get(kind, kind))} ({len(group)})</h2>")
+        for item in group:
+            name = item["tr"] or item["tj"] or "(без названия)"
+            meta = " · ".join(bit for bit in (item["d"], item["c"]) if bit)
+            body.append(
+                f"<div class='card'><a href='../{esc(item['u'])}'>{esc(name)}</a>"
+                + (f"<div class='meta'>{esc(meta)}</div>" if meta else "")
+                + "</div>"
+            )
+    body.append("<div class='meta'><a href='../index.html'>← Общий индекс</a></div>")
+    return layout(title, "".join(body), "../")
+
+
 def nav_links(nav: dict | None) -> str:
     if not nav:
         return ""
@@ -211,23 +352,6 @@ def nav_links(nav: dict | None) -> str:
     if not links:
         return ""
     return "<div class='meta' style='margin-top:2em'>" + " · ".join(links) + "</div>"
-
-
-def note_nav(settings, meta: dict, path_map: dict, global_nav: dict | None) -> dict:
-    """Приоритет — ссылки из карточки, если они есть в архиве; иначе соседи
-    по общему индексу. Так «предыдущая» и «следующая» есть всегда."""
-    result: dict[str, str] = {}
-    for key in ("prev", "next"):
-        target = meta.get(key)
-        if target:
-            absolute = urls.canonical(urls.absolute(settings.base_url, target))
-            local = path_map.get(absolute)
-            if local:
-                result[key] = local
-                continue
-        if global_nav and global_nav.get(key):
-            result[key] = global_nav[key]
-    return result
 
 
 def bilingual(ru_text: str | None, ja_text: str | None, lang: str) -> str:
@@ -589,6 +713,8 @@ def main() -> int:
                 "m": page["model"] or "",
                 "mn": meta.get("car_model") or meta.get("model") or "",
                 "g": page["generation"],
+                "uid": page["uid"],
+                "car": page["car"],
                 "x": search_text(meta, tr),
             }
         )
@@ -597,16 +723,65 @@ def main() -> int:
     for entry in entries:
         by_model.setdefault(entry["m"], []).append(entry)
 
-    nav_by_kind: dict[str, dict] = {}
+    nav_all: dict[str, dict] = {}
     for kind in KINDS:
-        items = [entry for entry in entries if entry["k"] == kind]
-        nav: dict[str, dict] = {}
-        for index, entry in enumerate(items):
-            nav[entry["u"]] = {
-                "prev": items[index - 1]["u"] if index > 0 else None,
-                "next": items[index + 1]["u"] if index + 1 < len(items) else None,
-            }
-        nav_by_kind[kind] = nav
+        if kind == "note":
+            ordered_urls = note_order(records, settings.base_url)
+            ordered = [path_map[url] for url in ordered_urls if url in path_map]
+        else:
+            ordered = [entry["u"] for entry in entries if entry["k"] == kind]
+        nav_all[kind] = nav_from_order(ordered)
+
+    # Порядок для фильтров: по модели и по модели+поколению.
+    nav_model: dict[tuple, dict] = {}
+    nav_gen: dict[tuple, dict] = {}
+    for kind in KINDS:
+        models = sorted({entry["m"] for entry in entries if entry["k"] == kind})
+        for model in models:
+            if kind == "note":
+                subset = [
+                    record
+                    for record in records
+                    if record[0]["kind"] == "note"
+                    and (record[0]["model"] or "") == model
+                ]
+                ordered_urls = note_order(subset, settings.base_url)
+                ordered = [path_map[url] for url in ordered_urls if url in path_map]
+            else:
+                ordered = [
+                    entry["u"]
+                    for entry in entries
+                    if entry["k"] == kind and entry["m"] == model
+                ]
+            nav_model[(kind, model)] = nav_from_order(ordered)
+
+            generations = sorted(
+                {
+                    entry["g"]
+                    for entry in entries
+                    if entry["k"] == kind and entry["m"] == model and entry["g"] is not None
+                }
+            )
+            for generation in generations:
+                if kind == "note":
+                    subset = [
+                        record
+                        for record in records
+                        if record[0]["kind"] == "note"
+                        and (record[0]["model"] or "") == model
+                        and record[0]["generation"] == generation
+                    ]
+                    ordered_urls = note_order(subset, settings.base_url)
+                    ordered = [path_map[url] for url in ordered_urls if url in path_map]
+                else:
+                    ordered = [
+                        entry["u"]
+                        for entry in entries
+                        if entry["k"] == kind
+                        and entry["m"] == model
+                        and entry["g"] == generation
+                    ]
+                nav_gen[(kind, model, generation)] = nav_from_order(ordered)
 
     built = 0
     for page, meta, tr in records:
@@ -614,12 +789,17 @@ def main() -> int:
         if renderer is None:
             continue
         rel = page_relpath(page)
-        global_nav = nav_by_kind.get(page["kind"], {}).get(rel)
-        nav = (
-            note_nav(settings, meta, path_map, global_nav)
-            if page["kind"] == "note"
-            else global_nav
-        )
+        nav = nav_all.get(page["kind"], {}).get(rel)
+        variants = {
+            "all": nav,
+            "model": nav_model.get((page["kind"], page["model"] or ""), {}).get(rel),
+        }
+        if page["generation"] is not None:
+            variants["gen"] = nav_gen.get(
+                (page["kind"], page["model"] or "", page["generation"]), {}
+            ).get(rel)
+        else:
+            variants["gen"] = variants["model"]
         if page["kind"] == "model":
             html_text = renderer(
                 settings,
@@ -633,10 +813,39 @@ def main() -> int:
             )
         else:
             html_text = renderer(settings, page, meta, tr, path_map, args.lang, nav=nav)
+        if page["kind"] in ("note", "parts", "review", "qa"):
+            block = owner_block(page)
+            if block:
+                html_text = html_text.replace("<footer>", block + "<footer>")
+        if variants.get("all") or variants.get("model"):
+            html_text = inject_nav(html_text, variants)
         target = settings.site_dir / page_relpath(page)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(html_text, encoding="utf-8")
         built += 1
+
+    by_author: dict[int, list[dict]] = {}
+    by_car: dict[tuple[int, int], list[dict]] = {}
+    for entry in entries:
+        uid = entry.get("uid")
+        car = entry.get("car")
+        if not uid:
+            continue
+        by_author.setdefault(uid, []).append(entry)
+        if car:
+            by_car.setdefault((uid, car), []).append(entry)
+
+    for (uid, car), items in by_car.items():
+        target = settings.site_dir / "cars" / f"{uid}-{car}.html"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            render_hub(f"Машина {uid}/{car}", items), encoding="utf-8"
+        )
+    for uid, items in by_author.items():
+        target = settings.site_dir / "authors" / f"{uid}.html"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(render_hub(f"Автор #{uid}", items), encoding="utf-8")
+    print(f"Страниц авторов: {len(by_author)}, машин: {len(by_car)}")
 
     (settings.site_dir / "search-index.js").write_text(
         "window.MINKARA_INDEX = " + json.dumps(entries, ensure_ascii=False) + ";",
