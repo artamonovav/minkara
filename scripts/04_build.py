@@ -179,7 +179,8 @@ def layout(title: str, body: str, depth: str = "") -> str:
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{esc(title)} — Minkara archive</title>"
         f"<link rel='stylesheet' href='{depth}style.css'></head><body>"
-        f"<header><a href='{depth}index.html'>← Все материалы</a></header>"
+        f"<header><a href='{depth}index.html'>← Все материалы</a> · "
+        f"<a href='{depth}open.html'>открыть по адресу</a></header>"
         f"<div class='wrap'>{body}</div>"
         "<footer>Личный офлайн-архив. Контент принадлежит авторам и Carview.</footer>"
         "<script>"
@@ -643,13 +644,86 @@ def search_text(meta: dict, tr: dict) -> str:
     return " ".join(chunk for chunk in chunks if chunk)[:1000]
 
 
+OPEN_JS = """
+const KEEP = new Set(['pn','bi','sci','ci','mk','br','id','cid','pt']);
+function normalize(input) {
+  let raw = (input || '').trim();
+  if (!raw) return null;
+  if (!/^https?:\\/\\//i.test(raw)) raw = 'https://' + raw;
+  let url;
+  try { url = new URL(raw); } catch (e) { return null; }
+  let host = url.hostname.toLowerCase();
+  if (host.endsWith('.translate.goog')) {
+    host = host.slice(0, -'.translate.goog'.length).replace(/-/g, '.');
+  }
+  if (host === 'www.minkara.carview.co.jp') host = 'minkara.carview.co.jp';
+  const params = [];
+  for (const [key, value] of url.searchParams.entries()) {
+    if (!KEEP.has(key)) continue;
+    if (key === 'pn' && value === '1') continue;
+    params.push([key, value]);
+  }
+  params.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+  const query = params.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
+  return 'https://' + host + url.pathname + (query ? '?' + query : '');
+}
+function run(value) {
+  const normalized = normalize(value);
+  const box = document.getElementById('result');
+  if (!normalized) { box.innerHTML = 'Не удалось разобрать адрес.'; return; }
+  const local = (window.MINKARA_URLS || {})[normalized];
+  if (local) {
+    box.innerHTML = 'Открываю локальную копию…';
+    window.location.replace(local);
+    return;
+  }
+  box.innerHTML = 'В архиве нет этой страницы.<br>Нормализованный адрес: <code>' +
+    normalized.replace(/&/g, '&amp;').replace(/</g, '&lt;') +
+    '</code><br><a href="' + normalized + '">Открыть оригинал на minkara</a>';
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const params = new URLSearchParams(location.search);
+  const hash = location.hash.startsWith('#url=') ? decodeURIComponent(location.hash.slice(5)) : '';
+  const value = params.get('url') || hash;
+  if (value) run(value);
+  document.getElementById('go').addEventListener('click', () => {
+    run(document.getElementById('url').value);
+  });
+  document.getElementById('url').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') run(e.target.value);
+  });
+});
+"""
+
+
+def render_open_page() -> str:
+    return (
+        "<!doctype html><html lang='ru'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>Открыть по адресу minkara</title>"
+        "<link rel='stylesheet' href='style.css'></head><body>"
+        "<header><a href='index.html'>← Все материалы</a></header>"
+        "<div class='wrap'><h1>Открыть сохранённую страницу</h1>"
+        "<p class='meta'>Вставьте адрес минкары — параметры, хвост Google Translate "
+        "и служебные метки будут проигнорированы.</p>"
+        "<div class='controls'>"
+        "<input id='url' type='text' placeholder='https://minkara.carview.co.jp/…'>"
+        "<button id='go' style='padding:8px 16px;border:1px solid #d1d5db;"
+        "border-radius:8px;background:#fff;cursor:pointer'>Открыть</button></div>"
+        "<div id='result' class='meta' style='margin-top:1em'></div></div>"
+        "<script src='url-map.js'></script><script>" + OPEN_JS + "</script>"
+        "</body></html>"
+    )
+
+
 def render_index(entries: list[dict]) -> str:
     return (
         "<!doctype html><html lang='ru'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         "<title>Minkara archive — Honda Freed</title>"
         "<link rel='stylesheet' href='style.css'></head><body>"
-        "<header><strong>Minkara archive</strong> · Honda Freed</header>"
+        "<header><strong>Minkara archive</strong> · Honda Freed · "
+        "<a href='open.html'>открыть по адресу</a></header>"
         "<div class='wrap'><h1>Материалы</h1>"
         "<div class='controls'>"
         "<input id='q' type='search' placeholder='Поиск по заголовкам и тексту (ru/ja)'>"
@@ -846,6 +920,16 @@ def main() -> int:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(render_hub(f"Автор #{uid}", items), encoding="utf-8")
     print(f"Страниц авторов: {len(by_author)}, машин: {len(by_car)}")
+
+    url_map = {
+        urls.canonical(page["url"]): page_relpath(page)
+        for page, _meta, _tr in records
+    }
+    (settings.site_dir / "url-map.js").write_text(
+        "window.MINKARA_URLS = " + json.dumps(url_map, ensure_ascii=False) + ";",
+        encoding="utf-8",
+    )
+    (settings.site_dir / "open.html").write_text(render_open_page(), encoding="utf-8")
 
     (settings.site_dir / "search-index.js").write_text(
         "window.MINKARA_INDEX = " + json.dumps(entries, ensure_ascii=False) + ";",
