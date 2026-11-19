@@ -621,7 +621,10 @@ def main() -> int:
         choices=["echo", "google", "google_cloud", "deepl", "openai", "ollama"],
     )
     parser.add_argument("--limit", type=int, default=0, help="сколько единиц перевести")
-    parser.add_argument("--batch-size", type=int, default=8, help="размер батча для LLM")
+    parser.add_argument("--batch-size", type=int, default=8, help="размер батча")
+    parser.add_argument(
+        "--workers", type=int, default=1, help="параллельных запросов (для Google)"
+    )
     parser.add_argument("--dry-run", action="store_true", help="только показать, что будет переведено")
     parser.add_argument("--no-sync", action="store_true", help="не обновлять text_units из meta_json")
     parser.add_argument("--sync-only", action="store_true", help="только синхронизировать единицы")
@@ -712,10 +715,9 @@ def main() -> int:
     failed = 0
     report_rows: list[tuple[str, str]] = []
     progress = Progress(len(units), translator.name)
-    for start in range(0, len(units), args.batch_size):
-        batch = units[start : start + args.batch_size]
+
+    def prepare(batch):
         texts = [unit["ja"] for unit in batch]
-        # Кэш: одинаковый японский текст переводим один раз.
         to_translate: list[int] = []
         results: list[str | None] = [None] * len(batch)
         for i, unit in enumerate(batch):
@@ -724,15 +726,10 @@ def main() -> int:
                 results[i] = cached
             else:
                 to_translate.append(i)
-        if to_translate:
-            try:
-                fresh = translator.translate([texts[i] for i in to_translate])
-            except Exception as exc:
-                failed += len(to_translate)
-                print(f"  ! батч {start // args.batch_size}: {exc}")
-                continue
-            for position, value in zip(to_translate, fresh, strict=False):
-                results[position] = value
+        return texts, to_translate, results
+
+    def store_results(batch, results):
+        nonlocal translated, failed
         for unit, value in zip(batch, results, strict=False):
             if value is None:
                 continue
@@ -745,6 +742,46 @@ def main() -> int:
             report_rows.append((unit["ja"], value))
         store.conn.commit()
         progress.update(translated + failed, f"ok {translated}, ошибок {failed}")
+
+    batches = [units[i : i + args.batch_size] for i in range(0, len(units), args.batch_size)]
+    if args.workers > 1:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            futures = {}
+            for batch in batches:
+                texts, to_translate, results = prepare(batch)
+                if not to_translate:
+                    store_results(batch, results)
+                    continue
+                future = pool.submit(
+                    translator.translate, [texts[i] for i in to_translate]
+                )
+                futures[future] = (batch, to_translate, results)
+            for future in as_completed(futures):
+                batch, to_translate, results = futures[future]
+                try:
+                    fresh = future.result()
+                except Exception as exc:
+                    failed += len(to_translate)
+                    print(f"  ! батч: {exc}")
+                    continue
+                for position, value in zip(to_translate, fresh, strict=False):
+                    results[position] = value
+                store_results(batch, results)
+    else:
+        for start, batch in enumerate(batches):
+            texts, to_translate, results = prepare(batch)
+            if to_translate:
+                try:
+                    fresh = translator.translate([texts[i] for i in to_translate])
+                except Exception as exc:
+                    failed += len(to_translate)
+                    print(f"  ! батч {start}: {exc}")
+                    continue
+                for position, value in zip(to_translate, fresh, strict=False):
+                    results[position] = value
+            store_results(batch, results)
 
     progress.close(translated + failed)
 
