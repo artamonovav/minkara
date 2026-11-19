@@ -54,20 +54,32 @@ class EchoTranslator:
         return [f"[ru] {text}" for text in texts]
 
 
-def _chunks(text: str, limit: int = 4000) -> list[str]:
-    """Режет длинный текст по строкам, чтобы не превысить лимит эндпоинта."""
-    if len(text) <= limit:
+def _encoded_len(text: str) -> int:
+    """Длина текста в URL-кодировке (японский символ ~9 байт)."""
+    return len(urllib.parse.quote(text, safe=""))
+
+
+def _chunks(text: str, limit: int = 6000) -> list[str]:
+    """Режет текст так, чтобы URL-кодированная часть влезала в лимит GET."""
+    if _encoded_len(text) <= limit:
         return [text]
     chunks: list[str] = []
     current = ""
     for line in text.splitlines(keepends=True):
-        while len(line) > limit:
+        while _encoded_len(line) > limit:
             if current:
                 chunks.append(current)
                 current = ""
-            chunks.append(line[:limit])
-            line = line[limit:]
-        if len(current) + len(line) > limit:
+            low, high = 1, len(line)
+            while low < high:
+                mid = (low + high + 1) // 2
+                if _encoded_len(line[:mid]) <= limit:
+                    low = mid
+                else:
+                    high = mid - 1
+            chunks.append(line[:low])
+            line = line[low:]
+        if _encoded_len(current + line) > limit:
             chunks.append(current)
             current = line
         else:
@@ -125,7 +137,7 @@ class GoogleWebTranslator:
 
     SEP = "\n\n---\n\n"
     MAX_BATCH = 30
-    MAX_CHARS = 3500
+    MAX_ENCODED = 11000
 
     def _one(self, text: str) -> str:
         last_error: Exception | None = None
@@ -144,11 +156,37 @@ class GoogleWebTranslator:
                 time.sleep(2**attempt)
         raise RuntimeError(f"Google Translate: {last_error}")
 
+    def _request_multi(self, texts: list[str]) -> list[str] | None:
+        """Несколько q за один запрос — без разделителей и склейки."""
+        params = [("client", "dict-chrome-ex"), ("sl", "ja"), ("tl", "ru")]
+        params.extend(("q", text) for text in texts)
+        url = "https://clients5.google.com/translate_a/t?" + urllib.parse.urlencode(params)
+        request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(request, timeout=40) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        if (
+            isinstance(data, list)
+            and len(data) == len(texts)
+            and all(isinstance(part, str) for part in data)
+        ):
+            return data
+        return None
+
     def _batch(self, texts: list[str]) -> list[str] | None:
+        try:
+            result = self._request_multi(texts)
+            if result is not None:
+                return result
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
+            pass
+        # Запасной путь: один запрос с разделителем.
         joined = self.SEP.join(texts)
-        if len(joined) > 4500:
+        if _encoded_len(joined) > self.MAX_ENCODED:
             return None
-        output = self._one(joined)
+        try:
+            output = self._one(joined)
+        except Exception:
+            return None
         parts = [part.strip() for part in re.split(r"\n\s*---\s*\n", output)]
         if len(parts) != len(texts):
             return None
@@ -169,30 +207,40 @@ class GoogleWebTranslator:
                 continue
 
             batch: list[tuple[int, str]] = []
-            size = 0
+            encoded = 0
             while index < len(texts) and len(batch) < self.MAX_BATCH:
                 candidate = texts[index]
                 if not candidate.strip():
                     index += 1
                     continue
-                if batch and size + len(candidate) > self.MAX_CHARS:
+                size = _encoded_len(candidate)
+                if batch and encoded + size > self.MAX_ENCODED:
                     break
                 batch.append((index, candidate))
-                size += len(candidate)
+                encoded += size
                 index += 1
 
             if not batch:
                 continue
-            parts = self._batch([item[1] for item in batch])
-            if parts is None:
-                # Разделитель не пережил перевод — переводим поштучно.
-                for position, source in batch:
-                    result[position] = self._one(source)
-                    time.sleep(0.5)
-            else:
-                for (position, _), value in zip(batch, parts, strict=False):
-                    result[position] = value
-            time.sleep(0.8)
+
+            def run(items: list[tuple[int, str]]) -> None:
+                parts = self._batch([item[1] for item in items])
+                if parts is not None:
+                    for (position, _), value in zip(items, parts, strict=False):
+                        result[position] = value
+                    return
+                if len(items) == 1:
+                    try:
+                        result[items[0][0]] = self._one(items[0][1])
+                    except Exception:
+                        result[items[0][0]] = ""
+                    return
+                middle = len(items) // 2
+                run(items[:middle])
+                run(items[middle:])
+
+            run(batch)
+            time.sleep(0.6)
         return result
 
 
@@ -505,6 +553,66 @@ def fix_bad(store: Store, glossary: dict[str, str], args, deepl_key: str) -> int
     return 0 if failed == 0 else 1
 
 
+def deepl_upgrade(store: Store, glossary: dict[str, str], args, key: str) -> int:
+    """Переводит самые крупные Google-тексты через DeepL, пока есть квота."""
+    if not key:
+        print("Нужен ключ DeepL (MINKARA_TRANSLATE_API_KEY / DEEPL_API_KEY)")
+        return 1
+    rows = store.conn.execute(
+        """SELECT id, ja, ru, length(ja) AS size FROM text_units
+           WHERE engine = 'google' AND ru IS NOT NULL
+           ORDER BY size DESC"""
+    ).fetchall()
+    if args.limit:
+        rows = rows[: args.limit]
+    info = deepl_api.usage(key)
+    remaining = info["remaining"]
+    print(
+        f"DeepL: остаток {remaining} символов; кандидатов {len(rows)} "
+        f"(самый крупный {rows[0]['size'] if rows else 0})"
+    )
+    if args.dry_run:
+        for row in rows[:20]:
+            print(f"  {row['size']:5d}  {row['ja'][:70]!r}")
+        return 0
+
+    selected = []
+    total = 0
+    for row in rows:
+        size = int(row["size"])
+        if total + size > remaining - 500:
+            break
+        selected.append(row)
+        total += size
+    print(f"К переводу через DeepL: {len(selected)} текстов, {total} символов")
+
+    upgraded = 0
+    failed = 0
+    report = []
+    for start in range(0, len(selected), 20):
+        batch = selected[start : start + 20]
+        texts = [row["ja"] for row in batch]
+        try:
+            values = deepl_api.translate(key, texts)
+        except Exception as exc:
+            failed += len(batch)
+            print(f"  ! батч {start // 20}: {exc}")
+            continue
+        for row, value in zip(batch, values, strict=False):
+            if quality.is_bad(row["ja"], value, glossary):
+                failed += 1
+                continue
+            store.set_translation(row["id"], value, "deepl", commit=False)
+            upgraded += 1
+            report.append((row["ja"], value))
+        store.conn.commit()
+        print(f"  обновлено: {upgraded}/{len(selected)}")
+    if args.report:
+        write_report(args.report, "deepl-upgrade", report)
+    print(f"\nDeepL-upgrade: обновлено {upgraded}, не удалось {failed}")
+    return 0 if failed == 0 else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Перевод текстов minkara")
     parser.add_argument(
@@ -529,6 +637,11 @@ def main() -> int:
     parser.add_argument("--min-chars", type=int, default=0, help="только тексты длиннее N символов")
     parser.add_argument("--max-chars", type=int, default=0, help="только тексты короче N символов")
     parser.add_argument("--check-usage", action="store_true", help="показать остаток квоты DeepL")
+    parser.add_argument(
+        "--deepl-upgrade",
+        action="store_true",
+        help="перевести самые крупные Google-тексты через DeepL",
+    )
     parser.add_argument(
         "--fix-bad",
         action="store_true",
@@ -559,6 +672,8 @@ def main() -> int:
         reset = reset_engine(store, args.redo_engine, args.limit or None)
         print(f"Сброшено переводов '{args.redo_engine}': {reset}")
     glossary = load_glossary(settings.glossary_file)
+    if args.deepl_upgrade:
+        return deepl_upgrade(store, glossary, args, deepl_key)
     if args.fix_bad:
         return fix_bad(store, glossary, args, deepl_key)
 
