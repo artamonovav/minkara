@@ -423,6 +423,25 @@ def esc(value: str | None) -> str:
     return html.escape(value or "")
 
 
+BLOCK_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.S | re.I)
+
+
+def minify_html(text: str) -> str:
+    """Убирает комментарии и пробелы между тегами, не трогая script/style."""
+    blocks: list[str] = []
+
+    def stash(match: re.Match) -> str:
+        blocks.append(match.group(0))
+        return f"@@MINKARA_BLOCK_{len(blocks) - 1}@@"
+
+    text = BLOCK_RE.sub(stash, text)
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    text = re.sub(r">\s+<", "><", text)
+    for index, block in enumerate(blocks):
+        text = text.replace(f"@@MINKARA_BLOCK_{index}@@", block)
+    return text
+
+
 def link_or_copy(src: Path, dst: Path) -> None:
     if dst.exists():
         return
@@ -460,7 +479,12 @@ def ensure_media(settings, media_url: str) -> str | None:
     rel = urls.asset_relpath(absolute)
     src = settings.assets_dir / rel
     if not src.exists():
-        return None
+        webp_rel = str(Path(rel).with_suffix(".webp"))
+        webp_src = settings.assets_dir / webp_rel
+        if webp_src.exists():
+            rel, src = webp_rel, webp_src
+        else:
+            return None
     link_or_copy(src, settings.site_dir / "media" / rel)
     return f"media/{rel}"
 
@@ -1204,7 +1228,7 @@ def main() -> int:
             html_text = inject_nav(html_text, variants)
         target = settings.site_dir / page_relpath(page)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(html_text, encoding="utf-8")
+        target.write_text(minify_html(html_text), encoding="utf-8")
         built += 1
 
     by_author: dict[int, list[dict]] = {}
@@ -1227,7 +1251,7 @@ def main() -> int:
     for uid, items in by_author.items():
         target = settings.site_dir / "authors" / f"{uid}.html"
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(render_hub(f"Автор #{uid}", items), encoding="utf-8")
+        target.write_text(minify_html(render_hub(f"Автор #{uid}", items)), encoding="utf-8")
     print(f"Страниц авторов: {len(by_author)}, машин: {len(by_car)}")
 
     url_map = {
@@ -1238,13 +1262,13 @@ def main() -> int:
         "window.MINKARA_URLS = " + json.dumps(url_map, ensure_ascii=False) + ";",
         encoding="utf-8",
     )
-    (settings.site_dir / "open.html").write_text(render_open_page(), encoding="utf-8")
+    (settings.site_dir / "open.html").write_text(minify_html(render_open_page()), encoding="utf-8")
 
     (settings.site_dir / "search-index.js").write_text(
         "window.MINKARA_INDEX = " + json.dumps(entries, ensure_ascii=False) + ";",
         encoding="utf-8",
     )
-    (settings.site_dir / "index.html").write_text(render_index(entries, args.lang), encoding="utf-8")
+    (settings.site_dir / "index.html").write_text(minify_html(render_index(entries, args.lang)), encoding="utf-8")
 
     print(f"Собрано страниц: {built}")
     print(f"Сайт: {settings.site_dir}/index.html")
