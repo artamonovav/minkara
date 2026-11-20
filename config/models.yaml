@@ -35,10 +35,10 @@ sections:
     enabled: true
     title: 整備手帳
   partsreview:
-    enabled: true
+    enabled: false
     title: パーツレビュー
   review:
-    enabled: true
+    enabled: false
     title: クルマレビュー
   photo:
     enabled: false

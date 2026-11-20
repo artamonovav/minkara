@@ -29,7 +29,7 @@ from minkara import urls  # noqa: E402
 from minkara.config import load_settings  # noqa: E402
 from minkara.db import Store  # noqa: E402
 
-KINDS = ("note", "parts", "review", "model")
+KINDS = ("note", "model")
 
 CSS = """
 :root { --fg:#1d1d1f; --muted:#6b7280; --bg:#fafafa; --card:#fff; --accent:#0a6cff; }
@@ -1054,9 +1054,7 @@ def render_index(entries: list[dict], lang: str = "ru") -> str:
         "<div class='controls'>"
         "<input id='q' type='search' placeholder='Поиск по заголовкам и тексту (ru/ja)'>"
         "<select id='kind'><option value=''>Все типы</option>"
-        "<option value='note'>Заметки</option><option value='parts'>Запчасти</option>"
-        "<option value='review'>Отзывы</option>"
-        "<option value='qa'>Вопросы</option><option value='model'>Модели</option></select>"
+        "<option value='note'>Заметки</option><option value='model'>Модели</option></select>"
         "<div class='multiselect' id='model-box'>"
         "<button id='model-toggle' type='button'>Все модели</button>"
         "<div class='multiselect-menu' id='model-menu' hidden></div></div>"

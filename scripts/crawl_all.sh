@@ -68,7 +68,7 @@ if [ -f "$DISCOVER_MARKER" ] && [ "${MINKARA_REFRESH:-0}" != "1" ]; then
 else
   say "1/7 discover (note, partsreview, review, qa)"
   "$PY" scripts/01_discover.py --brand honda "${MODELS_ARG[@]}" \
-    --sections note,partsreview,review
+    --sections note
   touch "$DISCOVER_MARKER"
   say "discover завершён, маркер создан"
 fi
@@ -77,13 +77,9 @@ say "2/7 fetch: машины, заметки, страницы моделей (w
 "$PY" scripts/02_fetch.py --kind note,model --no-assets \
   --workers "$WORKERS" --delay "$PAGE_DELAY"
 
-say "3/7 fetch: товары (регистрируют отзывы)"
-"$PY" scripts/02_fetch.py --kind product --no-assets \
-  --workers "$WORKERS" --delay "$PAGE_DELAY"
+say "3/7 товары/запчасти/отзывы отключены — пропуск"
 
-say "4/7 fetch: отзывы о запчастях, об авто и Q&A"
-"$PY" scripts/02_fetch.py --kind parts,review --no-assets \
-  --workers "$WORKERS" --delay "$PAGE_DELAY"
+say "4/7 Q&A/отзывы отключены — пропуск"
 
 if [ "${MINKARA_SKIP_ASSETS:-0}" = "1" ]; then
   say "5/7 медиа пропущено (MINKARA_SKIP_ASSETS=1)"
