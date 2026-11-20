@@ -74,6 +74,26 @@ table.index-table { width:100%; border-collapse:collapse; font-size:.9rem; }
 .index-table .muted { color:var(--muted); white-space:nowrap; }
 .index-table .badge { margin-right:0; }
 @media (max-width:700px) { .index-table .hide-sm { display:none; } }
+.pager { display:flex; flex-wrap:wrap; gap:4px; align-items:center;
+         justify-content:center; margin:16px 0; }
+.pager button { min-width:32px; padding:5px 8px; border:1px solid #d1d5db;
+                background:#fff; border-radius:7px; cursor:pointer; font-size:.9rem; }
+.pager button.active { background:#0a6cff; color:#fff; border-color:#0a6cff; }
+.pager button:disabled { opacity:.45; cursor:default; }
+.pager .gap { color:var(--muted); padding:0 2px; }
+.drawer { position:fixed; top:0; right:0; height:100%; width:min(760px, 92vw);
+          background:#fff; border-left:1px solid #e5e7eb; z-index:50;
+          box-shadow:-8px 0 24px rgba(0,0,0,.12); display:flex; flex-direction:column;
+          transform:translateX(100%); transition:transform .2s ease; }
+.drawer.open { transform:translateX(0); }
+.drawer-head { display:flex; align-items:center; justify-content:space-between;
+               padding:10px 14px; border-bottom:1px solid #e5e7eb; }
+.drawer-head button { border:0; background:none; font-size:1.5rem; line-height:1;
+                      cursor:pointer; padding:0 6px; }
+.drawer iframe { flex:1; width:100%; border:0; }
+.drawer-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.25); z-index:40;
+                   opacity:0; pointer-events:none; transition:opacity .2s ease; }
+.drawer-backdrop.open { opacity:1; pointer-events:auto; }
 table.ratings { border-collapse:collapse; margin:1em 0; }
 table.ratings td, table.ratings th { border-bottom:1px solid #eee; padding:4px 12px 4px 0;
          text-align:left; font-weight:normal; }
@@ -83,22 +103,88 @@ footer { color:var(--muted); font-size:.85rem; padding:30px 20px; text-align:cen
 INDEX_JS = """
 const KIND_LABELS = __KIND_LABELS__;
 const SHOW_JA = __SHOW_JA__;
-const PAGE = 100;
-const state = { q: "", model: "", gen: "", kind: "", limit: PAGE };
+const PAGE = 10;
+const state = { q: "", model: "", gen: "", kind: "", page: 1 };
 const $ = (id) => document.getElementById(id);
-function render() {
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",
+    '"':"&quot;","'":"&#39;" }[c]));
+}
+
+function pageNumbers(current, total) {
+  const set = new Set([1, total, current - 1, current, current + 1]);
+  const nums = [...set].filter((n) => n >= 1 && n <= total).sort((a, b) => a - b);
+  const out = [];
+  let prev = 0;
+  for (const n of nums) {
+    if (prev && n - prev > 1) out.push(null);
+    out.push(n);
+    prev = n;
+  }
+  return out;
+}
+
+function renderPager(totalPages) {
+  const parts = [];
+  parts.push('<button data-page="prev" ' + (state.page <= 1 ? "disabled" : "") +
+    '>← Назад</button>');
+  for (const n of pageNumbers(state.page, totalPages)) {
+    if (n === null) {
+      parts.push('<span class="gap">…</span>');
+    } else {
+      parts.push('<button data-page="' + n + '"' +
+        (n === state.page ? ' class="active"' : "") + '>' + n + "</button>");
+    }
+  }
+  parts.push('<button data-page="next" ' + (state.page >= totalPages ? "disabled" : "") +
+    '>Вперёд →</button>');
+  $("pager").innerHTML = parts.join("");
+}
+
+function openDrawer(href) {
+  $("drawer-frame").src = href;
+  $("drawer").classList.add("open");
+  $("drawer").setAttribute("aria-hidden", "false");
+  $("drawer-backdrop").classList.add("open");
+  $("drawer-close").focus();
+}
+
+function closeDrawer() {
+  $("drawer").classList.remove("open");
+  $("drawer").setAttribute("aria-hidden", "true");
+  $("drawer-backdrop").classList.remove("open");
+  setTimeout(() => {
+    if (!$("drawer").classList.contains("open")) {
+      $("drawer-frame").src = "about:blank";
+    }
+  }, 250);
+}
+
+function filteredItems() {
   const list = window.MINKARA_INDEX || [];
   const q = state.q.trim().toLowerCase();
-  const items = list.filter((it) => {
+  return list.filter((it) => {
     if (state.model && it.m !== state.model) return false;
     if (state.gen && String(it.g) !== state.gen) return false;
     if (state.kind && it.k !== state.kind) return false;
     if (!q) return true;
     return (it.x || "").toLowerCase().includes(q);
   });
-  const shown = items.slice(0, state.limit);
-  $("count").textContent = "показано " + shown.length + " из " + items.length;
-  $("more").style.display = items.length > state.limit ? "inline-block" : "none";
+}
+
+function render() {
+  const items = filteredItems();
+  const total = items.length;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE));
+  if (state.page > totalPages) state.page = totalPages;
+  const start = (state.page - 1) * PAGE;
+  const shown = items.slice(start, start + PAGE);
+  $("count").textContent = total
+    ? "показано " + (start + 1) + "–" + Math.min(start + PAGE, total) + " из " + total
+    : "ничего не найдено";
+  renderPager(totalPages);
+
   if (!shown.length) {
     $("list").innerHTML = '<div class="meta" style="padding:12px">Ничего не найдено</div>';
     return;
@@ -111,7 +197,8 @@ function render() {
       escapeHtml(KIND_LABELS[it.k] || it.k) + "</span>" : "";
     return '<tr data-href="' + href + '">' +
       "<td>" + badge + "</td>" +
-      '<td class="title"><a href="' + href + '">' + escapeHtml(title) + "</a></td>" +
+      '<td class="title"><a target="_blank" rel="noopener" href="' + href + '">' +
+      escapeHtml(title) + "</a></td>" +
       '<td class="muted hide-sm">' + escapeHtml(it.mn || it.m || "") + "</td>" +
       '<td class="muted hide-sm">' + (it.g ? String(it.g) : "") + "</td>" +
       '<td class="muted hide-sm">' + escapeHtml(it.d || "") + "</td>" +
@@ -125,25 +212,55 @@ function render() {
   $("list").querySelectorAll("tr[data-href]").forEach((row) => {
     row.addEventListener("click", (event) => {
       if (event.target.closest("a")) return;
-      window.location.href = row.getAttribute("data-href");
+      openDrawer(row.getAttribute("data-href"));
     });
   });
 }
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",
-    '"':"&quot;","'":"&#39;" }[c]));
-}
+
 document.addEventListener("DOMContentLoaded", () => {
   const list = window.MINKARA_INDEX || [];
   const models = [...new Set(list.map((it) => it.m).filter(Boolean))].sort();
   $("model").innerHTML = '<option value="">Все модели</option>' +
     models.map((m) => '<option value="' + m + '">' + escapeHtml(m) + "</option>").join("");
-  const reset = () => { state.limit = PAGE; render(); };
+
+  const reset = () => { state.page = 1; render(); };
   $("q").addEventListener("input", (e) => { state.q = e.target.value; reset(); });
   $("model").addEventListener("change", (e) => { state.model = e.target.value; reset(); });
   $("gen").addEventListener("change", (e) => { state.gen = e.target.value; reset(); });
   $("kind").addEventListener("change", (e) => { state.kind = e.target.value; reset(); });
-  $("more").addEventListener("click", () => { state.limit += PAGE; render(); });
+  $("pager").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-page]");
+    if (!button || button.disabled) return;
+    const value = button.getAttribute("data-page");
+    if (value === "prev") state.page -= 1;
+    else if (value === "next") state.page += 1;
+    else state.page = Number(value);
+    render();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+  $("drawer-close").addEventListener("click", closeDrawer);
+  $("drawer-backdrop").addEventListener("click", closeDrawer);
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeDrawer();
+    if (!event.ctrlKey || event.altKey || event.metaKey) return;
+    const tag = (event.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || tag === "select") return;
+    if (event.key === "ArrowLeft" && state.page > 1) {
+      event.preventDefault();
+      state.page -= 1;
+      render();
+    }
+    if (event.key === "ArrowRight") {
+      const totalPages = Math.max(1, Math.ceil(filteredItems().length / PAGE));
+      if (state.page < totalPages) {
+        event.preventDefault();
+        state.page += 1;
+        render();
+      }
+    }
+  });
+
   render();
 });
 """
@@ -808,10 +925,12 @@ def render_index(entries: list[dict], lang: str = "ru") -> str:
         "<option value='3'>3-е</option></select>"
         "</div><div class='meta'><span id='count'></span></div>"
         "<div id='list'></div>"
-        "<div style='text-align:center;margin:16px 0'>"
-        "<button id='more' style='padding:8px 16px;border:1px solid #d1d5db;"
-        "border-radius:8px;background:#fff;cursor:pointer'>Показать ещё</button>"
-        "</div></div>"
+        "<div id='pager' class='pager'></div></div>"
+        "<div id='drawer-backdrop' class='drawer-backdrop'></div>"
+        "<aside id='drawer' class='drawer' aria-hidden='true'>"
+        "<div class='drawer-head'><strong>Предпросмотр</strong>"
+        "<button id='drawer-close' title='Закрыть (Esc)'>×</button></div>"
+        "<iframe id='drawer-frame' title='Предпросмотр'></iframe></aside>"
         "<footer>Личный офлайн-архив. Контент принадлежит авторам и Carview.</footer>"
         "<script src='search-index.js'></script><script>"
         + INDEX_JS.replace("__KIND_LABELS__", KIND_LABELS_JS).replace("__SHOW_JA__", "true" if lang == "both" else "false")
