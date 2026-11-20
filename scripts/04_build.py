@@ -29,7 +29,7 @@ from minkara import urls  # noqa: E402
 from minkara.config import load_settings  # noqa: E402
 from minkara.db import Store  # noqa: E402
 
-KINDS = ("note", "parts", "review", "product", "qa", "model")
+KINDS = ("note", "parts", "review", "product", "model")
 
 CSS = """
 :root { --fg:#1d1d1f; --muted:#6b7280; --bg:#fafafa; --card:#fff; --accent:#0a6cff; }

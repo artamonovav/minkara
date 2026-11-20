@@ -90,7 +90,7 @@ def main() -> int:
 
     if pairs:
         conn = sqlite3.connect(settings.db_path, timeout=60)
-        for old_path, new_path, old_size, new_size in pairs:
+        for old_path, new_path, _old_size, new_size in pairs:
             old_rel = str(Path(old_path).relative_to(settings.assets_dir))
             new_rel = str(Path(new_path).relative_to(settings.assets_dir))
             conn.execute(

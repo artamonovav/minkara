@@ -68,7 +68,7 @@ if [ -f "$DISCOVER_MARKER" ] && [ "${MINKARA_REFRESH:-0}" != "1" ]; then
 else
   say "1/7 discover (note, partsreview, review, qa)"
   "$PY" scripts/01_discover.py --brand honda "${MODELS_ARG[@]}" \
-    --sections note,partsreview,review,qa
+    --sections note,partsreview,review
   touch "$DISCOVER_MARKER"
   say "discover завершён, маркер создан"
 fi
@@ -82,7 +82,7 @@ say "3/7 fetch: товары (регистрируют отзывы)"
   --workers "$WORKERS" --delay "$PAGE_DELAY"
 
 say "4/7 fetch: отзывы о запчастях, об авто и Q&A"
-"$PY" scripts/02_fetch.py --kind parts,review,qa --no-assets \
+"$PY" scripts/02_fetch.py --kind parts,review --no-assets \
   --workers "$WORKERS" --delay "$PAGE_DELAY"
 
 if [ "${MINKARA_SKIP_ASSETS:-0}" = "1" ]; then
