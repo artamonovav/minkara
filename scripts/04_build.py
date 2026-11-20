@@ -59,6 +59,20 @@ figcaption { margin-top:.5em; }
 .controls input, .controls select { padding:8px 10px; border:1px solid #d1d5db;
         border-radius:8px; font-size:.95rem; background:#fff; }
 .controls input { flex:1 1 240px; }
+.multiselect { position:relative; }
+.multiselect > button { padding:8px 10px; border:1px solid #d1d5db; border-radius:8px;
+                        background:#fff; font-size:.95rem; cursor:pointer;
+                        min-width:170px; text-align:left; }
+.multiselect-menu { position:absolute; top:calc(100% + 4px); left:0; z-index:30;
+                    background:#fff; border:1px solid #d1d5db; border-radius:8px;
+                    box-shadow:0 8px 24px rgba(0,0,0,.12); padding:8px;
+                    min-width:240px; max-height:320px; overflow:auto; }
+.multiselect-menu label { display:flex; gap:8px; align-items:center; padding:4px 6px;
+                          border-radius:6px; cursor:pointer; font-size:.9rem;
+                          white-space:nowrap; }
+.multiselect-menu label:hover { background:#f1f5f9; }
+.multiselect-menu .ms-all { border-bottom:1px solid #e5e7eb; margin-bottom:4px;
+                            padding-bottom:6px; font-weight:600; }
 .external::after { content:" ↗"; color:var(--muted); }
 .badge { display:inline-block; font-size:.75rem; padding:1px 7px; border-radius:999px;
          background:#eef2ff; color:#3730a3; margin-right:.4em; }
@@ -117,7 +131,8 @@ INDEX_JS = """
 const KIND_LABELS = __KIND_LABELS__;
 const SHOW_JA = __SHOW_JA__;
 const PAGE = 10;
-const state = { q: "", model: "", gen: "", kind: "", page: 1 };
+const state = { q: "", models: new Set(), gen: "", kind: "", page: 1 };
+const modelLabels = {};
 const $ = (id) => document.getElementById(id);
 
 function escapeHtml(s) {
@@ -178,7 +193,7 @@ function filteredItems() {
   const list = window.MINKARA_INDEX || [];
   const q = state.q.trim().toLowerCase();
   return list.filter((it) => {
-    if (state.model && it.m !== state.model) return false;
+    if (state.models.size && !state.models.has(it.m)) return false;
     if (state.gen && String(it.g) !== state.gen) return false;
     if (state.kind && it.k !== state.kind) return false;
     if (!q) return true;
@@ -202,7 +217,7 @@ function render() {
     $("list").innerHTML = '<div class="meta" style="padding:12px">Ничего не найдено</div>';
     return;
   }
-  const suffix = state.gen ? '#nav=gen' : (state.model ? '#nav=model' : '');
+  const suffix = state.gen ? '#nav=gen' : (state.models.size === 1 ? '#nav=model' : '');
   const rows = shown.map((it) => {
     const title = it.tr || it.tj || "(без названия)";
     const href = it.u + suffix;
@@ -232,13 +247,59 @@ function render() {
 
 document.addEventListener("DOMContentLoaded", () => {
   const list = window.MINKARA_INDEX || [];
-  const models = [...new Set(list.map((it) => it.m).filter(Boolean))].sort();
-  $("model").innerHTML = '<option value="">Все модели</option>' +
-    models.map((m) => '<option value="' + m + '">' + escapeHtml(m) + "</option>").join("");
+  for (const item of list) {
+    if (item.m && !modelLabels[item.m]) modelLabels[item.m] = item.mn || item.m;
+  }
+  const modelKeys = Object.keys(modelLabels).sort((a, b) =>
+    modelLabels[a].localeCompare(modelLabels[b], "ru")
+  );
+  $("model-menu").innerHTML =
+    '<label class="ms-all"><input type="checkbox" id="model-all" checked> Все модели</label>' +
+    modelKeys.map((key) =>
+      '<label><input type="checkbox" value="' + escapeHtml(key) + '"> ' +
+      escapeHtml(modelLabels[key]) + "</label>"
+    ).join("");
 
   const reset = () => { state.page = 1; render(); };
+  const updateModelLabel = () => {
+    const toggle = $("model-toggle");
+    if (!state.models.size) {
+      toggle.textContent = "Все модели";
+    } else if (state.models.size === 1) {
+      const key = [...state.models][0];
+      toggle.textContent = modelLabels[key] || key;
+    } else {
+      toggle.textContent = "Модели: " + state.models.size;
+    }
+  };
+  const menu = $("model-menu");
+  $("model-toggle").addEventListener("click", (event) => {
+    event.stopPropagation();
+    menu.hidden = !menu.hidden;
+  });
+  menu.addEventListener("click", (event) => event.stopPropagation());
+  menu.addEventListener("change", (event) => {
+    const checkbox = event.target;
+    if (!(checkbox instanceof HTMLInputElement) || checkbox.type !== "checkbox") return;
+    if (checkbox.id === "model-all") {
+      state.models.clear();
+      menu.querySelectorAll("input[type=checkbox]:not(#model-all)").forEach((item) => {
+        item.checked = false;
+      });
+    } else {
+      if (checkbox.checked) state.models.add(checkbox.value);
+      else state.models.delete(checkbox.value);
+      const all = menu.querySelector("#model-all");
+      if (all) all.checked = state.models.size === 0;
+    }
+    updateModelLabel();
+    reset();
+  });
+  document.addEventListener("click", (event) => {
+    if (!$("model-box").contains(event.target)) menu.hidden = true;
+  });
+
   $("q").addEventListener("input", (e) => { state.q = e.target.value; reset(); });
-  $("model").addEventListener("change", (e) => { state.model = e.target.value; reset(); });
   $("gen").addEventListener("change", (e) => { state.gen = e.target.value; reset(); });
   $("kind").addEventListener("change", (e) => { state.kind = e.target.value; reset(); });
   $("pager").addEventListener("click", (event) => {
@@ -292,7 +353,10 @@ document.addEventListener("DOMContentLoaded", () => {
   resizer.addEventListener("pointercancel", stopDrag);
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeDrawer();
+    if (event.key === "Escape") {
+      closeDrawer();
+      $("model-menu").hidden = true;
+    }
     if (!event.ctrlKey || event.altKey || event.metaKey) return;
     const tag = (event.target.tagName || "").toLowerCase();
     if (tag === "input" || tag === "textarea" || tag === "select") return;
@@ -969,7 +1033,9 @@ def render_index(entries: list[dict], lang: str = "ru") -> str:
         "<option value='note'>Заметки</option><option value='parts'>Запчасти</option>"
         "<option value='review'>Отзывы</option><option value='product'>Товары</option>"
         "<option value='qa'>Вопросы</option><option value='model'>Модели</option></select>"
-        "<select id='model'><option value=''>Все модели</option></select>"
+        "<div class='multiselect' id='model-box'>"
+        "<button id='model-toggle' type='button'>Все модели</button>"
+        "<div class='multiselect-menu' id='model-menu' hidden></div></div>"
         "<select id='gen'><option value=''>Все поколения</option>"
         "<option value='1'>1-е</option><option value='2'>2-е</option>"
         "<option value='3'>3-е</option></select>"
