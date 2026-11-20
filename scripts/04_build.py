@@ -39,7 +39,7 @@ body { margin:0; font:16px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif;
 header { padding:14px 20px; background:var(--card); border-bottom:1px solid #e5e7eb;
          position:sticky; top:0; z-index:2; }
 header a { color:var(--accent); text-decoration:none; }
-.wrap { max-width:900px; margin:0 auto; padding:20px; }
+.wrap { width:100%; max-width:none; margin:0; padding:20px clamp(16px, 3vw, 48px); }
 h1 { font-size:1.5rem; margin:.2em 0 .6em; }
 h2 { font-size:1.15rem; margin:1.4em 0 .4em; }
 .meta { color:var(--muted); font-size:.9rem; margin-bottom:1em; }
@@ -81,15 +81,23 @@ table.index-table { width:100%; border-collapse:collapse; font-size:.9rem; }
 .pager button.active { background:#0a6cff; color:#fff; border-color:#0a6cff; }
 .pager button:disabled { opacity:.45; cursor:default; }
 .pager .gap { color:var(--muted); padding:0 2px; }
-.drawer { position:fixed; top:0; right:0; height:100%; width:min(760px, 92vw);
-          background:#fff; border-left:1px solid #e5e7eb; z-index:50;
+.drawer { position:fixed; top:0; right:0; height:100%; width:66vw; min-width:320px;
+          max-width:100vw; background:#fff; border-left:1px solid #e5e7eb; z-index:50;
           box-shadow:-8px 0 24px rgba(0,0,0,.12); display:flex; flex-direction:column;
           transform:translateX(100%); transition:transform .2s ease; }
+.drawer-resizer { position:absolute; left:0; top:0; bottom:0; width:8px;
+                  cursor:col-resize; z-index:60; }
+.drawer-resizer::after { content:""; position:absolute; left:3px; top:50%;
+                  width:2px; height:42px; background:#cbd5e1; border-radius:2px;
+                  transform:translateY(-50%); }
 .drawer.open { transform:translateX(0); }
 .drawer-head { display:flex; align-items:center; justify-content:space-between;
                padding:10px 14px; border-bottom:1px solid #e5e7eb; }
+.drawer-head span { display:flex; align-items:center; gap:8px; }
 .drawer-head button { border:0; background:none; font-size:1.5rem; line-height:1;
                       cursor:pointer; padding:0 6px; }
+.drawer-head #drawer-pdf { font-size:.8rem; border:1px solid #d1d5db; border-radius:6px;
+                           padding:3px 8px; }
 .drawer iframe { flex:1; width:100%; border:0; }
 .drawer-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.25); z-index:40;
                    opacity:0; pointer-events:none; transition:opacity .2s ease; }
@@ -98,6 +106,11 @@ table.ratings { border-collapse:collapse; margin:1em 0; }
 table.ratings td, table.ratings th { border-bottom:1px solid #eee; padding:4px 12px 4px 0;
          text-align:left; font-weight:normal; }
 footer { color:var(--muted); font-size:.85rem; padding:30px 20px; text-align:center; }
+@media print {
+  header, footer, #nav-switch, .drawer, .drawer-backdrop { display:none !important; }
+  .wrap { padding:0; }
+  a { color:#000; text-decoration:none; }
+}
 """
 
 INDEX_JS = """
@@ -240,6 +253,43 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   $("drawer-close").addEventListener("click", closeDrawer);
   $("drawer-backdrop").addEventListener("click", closeDrawer);
+  $("drawer-pdf").addEventListener("click", () => {
+    const frame = $("drawer-frame");
+    try {
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+    } catch (error) {
+      window.open(frame.src, "_blank", "noopener");
+    }
+  });
+
+  const drawer = $("drawer");
+  const resizer = $("drawer-resizer");
+  const savedWidth = Number(localStorage.getItem("minkara-drawer-width") || 0);
+  if (savedWidth) drawer.style.width = Math.min(savedWidth, window.innerWidth) + "px";
+  let dragging = false;
+  resizer.addEventListener("pointerdown", (event) => {
+    dragging = true;
+    resizer.setPointerCapture(event.pointerId);
+    document.body.style.userSelect = "none";
+    event.preventDefault();
+  });
+  resizer.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    const width = Math.max(320, Math.min(window.innerWidth, window.innerWidth - event.clientX));
+    drawer.style.width = width + "px";
+  });
+  const stopDrag = () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.style.userSelect = "";
+    localStorage.setItem(
+      "minkara-drawer-width",
+      String(Math.round(drawer.getBoundingClientRect().width))
+    );
+  };
+  resizer.addEventListener("pointerup", stopDrag);
+  resizer.addEventListener("pointercancel", stopDrag);
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeDrawer();
@@ -928,8 +978,10 @@ def render_index(entries: list[dict], lang: str = "ru") -> str:
         "<div id='pager' class='pager'></div></div>"
         "<div id='drawer-backdrop' class='drawer-backdrop'></div>"
         "<aside id='drawer' class='drawer' aria-hidden='true'>"
-        "<div class='drawer-head'><strong>Предпросмотр</strong>"
-        "<button id='drawer-close' title='Закрыть (Esc)'>×</button></div>"
+        "<div id='drawer-resizer' class='drawer-resizer' title='Потяните, чтобы изменить ширину'></div>"
+        "<div class='drawer-head'><strong>Предпросмотр</strong><span>"
+        "<button id='drawer-pdf' title='Сохранить в PDF (печать)'>PDF</button>"
+        "<button id='drawer-close' title='Закрыть (Esc)'>×</button></span></div>"
         "<iframe id='drawer-frame' title='Предпросмотр'></iframe></aside>"
         "<footer>Личный офлайн-архив. Контент принадлежит авторам и Carview.</footer>"
         "<script src='search-index.js'></script><script>"
