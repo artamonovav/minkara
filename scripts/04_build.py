@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -60,6 +62,18 @@ figcaption { margin-top:.5em; }
 .external::after { content:" ↗"; color:var(--muted); }
 .badge { display:inline-block; font-size:.75rem; padding:1px 7px; border-radius:999px;
          background:#eef2ff; color:#3730a3; margin-right:.4em; }
+.table-wrap { overflow-x:auto; background:var(--card); border:1px solid #e5e7eb;
+              border-radius:10px; }
+table.index-table { width:100%; border-collapse:collapse; font-size:.9rem; }
+.index-table th { position:sticky; top:0; background:#f8fafc; text-align:left;
+                  padding:8px 10px; border-bottom:1px solid #e5e7eb;
+                  font-weight:600; white-space:nowrap; }
+.index-table td { padding:6px 10px; border-bottom:1px solid #f1f5f9; vertical-align:top; }
+.index-table tbody tr:hover { background:#f8fafc; }
+.index-table .title { font-weight:500; }
+.index-table .muted { color:var(--muted); white-space:nowrap; }
+.index-table .badge { margin-right:0; }
+@media (max-width:700px) { .index-table .hide-sm { display:none; } }
 table.ratings { border-collapse:collapse; margin:1em 0; }
 table.ratings td, table.ratings th { border-bottom:1px solid #eee; padding:4px 12px 4px 0;
          text-align:left; font-weight:normal; }
@@ -68,6 +82,7 @@ footer { color:var(--muted); font-size:.85rem; padding:30px 20px; text-align:cen
 
 INDEX_JS = """
 const KIND_LABELS = __KIND_LABELS__;
+const SHOW_JA = __SHOW_JA__;
 const PAGE = 100;
 const state = { q: "", model: "", gen: "", kind: "", limit: PAGE };
 const $ = (id) => document.getElementById(id);
@@ -84,18 +99,35 @@ function render() {
   const shown = items.slice(0, state.limit);
   $("count").textContent = "показано " + shown.length + " из " + items.length;
   $("more").style.display = items.length > state.limit ? "inline-block" : "none";
-  $("list").innerHTML = shown.map((it) => {
+  if (!shown.length) {
+    $("list").innerHTML = '<div class="meta" style="padding:12px">Ничего не найдено</div>';
+    return;
+  }
+  const suffix = state.gen ? '#nav=gen' : (state.model ? '#nav=model' : '');
+  const rows = shown.map((it) => {
     const title = it.tr || it.tj || "(без названия)";
-    const sub = it.tr && it.tj ? '<div class="ja">' + escapeHtml(it.tj) + "</div>" : "";
-    const meta = [it.d, it.c, it.mn, it.g ? "поколение " + it.g : ""]
-      .filter(Boolean).map(escapeHtml).join(" · ");
+    const href = it.u + suffix;
     const badge = it.k ? '<span class="badge">' +
       escapeHtml(KIND_LABELS[it.k] || it.k) + "</span>" : "";
-    const suffix = state.gen ? '#nav=gen' : (state.model ? '#nav=model' : '');
-    return '<div class="card"><a href="' + it.u + suffix + '">' + badge +
-      '<span class="ru">' + escapeHtml(title) + "</span></a>" + sub +
-      '<div class="meta">' + meta + "</div></div>";
+    return '<tr data-href="' + href + '">' +
+      "<td>" + badge + "</td>" +
+      '<td class="title"><a href="' + href + '">' + escapeHtml(title) + "</a></td>" +
+      '<td class="muted hide-sm">' + escapeHtml(it.mn || it.m || "") + "</td>" +
+      '<td class="muted hide-sm">' + (it.g ? String(it.g) : "") + "</td>" +
+      '<td class="muted hide-sm">' + escapeHtml(it.d || "") + "</td>" +
+      "</tr>";
   }).join("");
+  $("list").innerHTML =
+    '<div class="table-wrap"><table class="index-table"><thead><tr>' +
+    "<th>Тип</th><th>Заголовок</th><th class='hide-sm'>Модель</th>" +
+    "<th class='hide-sm'>Пок.</th><th class='hide-sm'>Дата</th>" +
+    "</tr></thead><tbody>" + rows + "</tbody></table></div>";
+  $("list").querySelectorAll("tr[data-href]").forEach((row) => {
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("a")) return;
+      window.location.href = row.getAttribute("data-href");
+    });
+  });
 }
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",
@@ -124,6 +156,35 @@ KIND_LABELS = {
     "qa": "вопрос",
     "model": "модель",
 }
+
+CATEGORY_MAP: dict[str, str] = {}
+MODEL_MAP: dict[str, str] = {}
+DATE_RE = re.compile(r"(\d{4})年(\d{1,2})月(\d{1,2})日")
+
+
+def ru_date(value: str | None) -> str:
+    text = value or ""
+    match = DATE_RE.search(text)
+    if not match:
+        return text
+    return f"{int(match.group(3)):02d}.{int(match.group(2)):02d}.{match.group(1)}"
+
+
+def ru_category(value: str) -> str:
+    return CATEGORY_MAP.get(value, value)
+
+
+def ru_model(value: str | None) -> str:
+    return MODEL_MAP.get(value or "", value or "")
+
+
+def load_taxonomy(settings) -> None:
+    path = settings.root / "config" / "taxonomy.ru.yaml"
+    if not path.exists():
+        return
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    CATEGORY_MAP.update(data.get("categories") or {})
+    MODEL_MAP.update(data.get("models") or {})
 KIND_LABELS_JS = json.dumps(KIND_LABELS, ensure_ascii=False)
 
 
@@ -367,12 +428,13 @@ def bilingual(ru_text: str | None, ja_text: str | None, lang: str) -> str:
 def render_note(settings, page, meta, tr, path_map, lang, nav=None) -> str:
     title_ru = tr.get(("title", 0))
     title_ja = meta.get("title") or ""
-    body = [f"<h1>{esc(title_ru or title_ja)}</h1>"]
-    if title_ru and title_ja:
+    title = title_ja if lang == "ja" and title_ja else (title_ru or title_ja)
+    body = [f"<h1>{esc(title)}</h1>"]
+    if lang == "both" and title_ru and title_ja:
         body.append(f"<div class='ja'>{esc(title_ja)}</div>")
     bits = [
-        meta.get("date"),
-        meta.get("car_model"),
+        ru_date(meta.get("date")),
+        ru_model(meta.get("car_model")),
         f"поколение {page['generation']}" if page["generation"] else "",
         meta.get("work_time"),
         meta.get("difficulty"),
@@ -386,7 +448,7 @@ def render_note(settings, page, meta, tr, path_map, lang, nav=None) -> str:
     if meta.get("categories"):
         body.append(
             "<div class='meta'>"
-            + "".join(f"<span>{esc(c)}</span>" for c in meta["categories"])
+            + "".join(f"<span>{esc(ru_category(c))}</span>" for c in meta["categories"])
             + "</div>"
         )
     body.append(
@@ -415,18 +477,19 @@ def render_note(settings, page, meta, tr, path_map, lang, nav=None) -> str:
             )
 
     body.append(nav_links(nav))
-    return layout(title_ru or title_ja, "".join(body), "../")
+    return layout(title, "".join(body), "../")
 
 
 def render_parts(settings, page, meta, tr, path_map, lang, nav=None) -> str:
     title_ru = tr.get(("title", 0))
     title_ja = meta.get("title") or ""
-    body = [f"<h1>{esc(title_ru or title_ja)}</h1>"]
-    if title_ru and title_ja:
+    title = title_ja if lang == "ja" and title_ja else (title_ru or title_ja)
+    body = [f"<h1>{esc(title)}</h1>"]
+    if lang == "both" and title_ru and title_ja:
         body.append(f"<div class='ja'>{esc(title_ja)}</div>")
     bits = [
         meta.get("author"),
-        meta.get("date"),
+        ru_date(meta.get("date")),
         f"оценка {meta['score']}" if meta.get("score") else "",
     ]
     body.append(
@@ -437,7 +500,7 @@ def render_parts(settings, page, meta, tr, path_map, lang, nav=None) -> str:
     if meta.get("categories"):
         body.append(
             "<div class='meta'>"
-            + "".join(f"<span>{esc(c)}</span>" for c in meta["categories"])
+            + "".join(f"<span>{esc(ru_category(c))}</span>" for c in meta["categories"])
             + "</div>"
         )
     body.append(
@@ -449,20 +512,21 @@ def render_parts(settings, page, meta, tr, path_map, lang, nav=None) -> str:
         body.append(f"<figure><img loading='lazy' src='../{esc(media)}' alt=''></figure>")
     body.append(bilingual(tr.get(("review", 1)), meta.get("text"), lang))
     body.append(nav_links(nav))
-    return layout(title_ru or title_ja, "".join(body), "../")
+    return layout(title, "".join(body), "../")
 
 
 def render_review(settings, page, meta, tr, path_map, lang, nav=None) -> str:
     title_ru = tr.get(("title", 0))
     title_ja = meta.get("title") or ""
-    body = [f"<h1>{esc(title_ru or title_ja)}</h1>"]
-    if title_ru and title_ja:
+    title = title_ja if lang == "ja" and title_ja else (title_ru or title_ja)
+    body = [f"<h1>{esc(title)}</h1>"]
+    if lang == "both" and title_ru and title_ja:
         body.append(f"<div class='ja'>{esc(title_ja)}</div>")
     bits = [
         meta.get("author"),
-        meta.get("model"),
+        ru_model(meta.get("model")),
         meta.get("grade"),
-        meta.get("date"),
+        ru_date(meta.get("date")),
         f"оценка {meta['score']}" if meta.get("score") else "",
         f"поколение {page['generation']}" if page["generation"] else "",
     ]
@@ -497,14 +561,15 @@ def render_review(settings, page, meta, tr, path_map, lang, nav=None) -> str:
             "связанная запись</a></div>"
         )
     body.append(nav_links(nav))
-    return layout(title_ru or title_ja, "".join(body), "../")
+    return layout(title, "".join(body), "../")
 
 
 def render_product(settings, page, meta, tr, path_map, lang, nav=None) -> str:
     title_ru = tr.get(("title", 0))
     title_ja = meta.get("title") or ""
-    body = [f"<h1>{esc(title_ru or title_ja)}</h1>"]
-    if title_ru and title_ja:
+    title = title_ja if lang == "ja" and title_ja else (title_ru or title_ja)
+    body = [f"<h1>{esc(title)}</h1>"]
+    if lang == "both" and title_ru and title_ja:
         body.append(f"<div class='ja'>{esc(title_ja)}</div>")
     bits = [
         meta.get("rating"),
@@ -533,16 +598,21 @@ def render_product(settings, page, meta, tr, path_map, lang, nav=None) -> str:
                     "отзыв на minkara</a></div>"
                 )
     body.append(nav_links(nav))
-    return layout(title_ru or title_ja, "".join(body), "../")
+    return layout(title, "".join(body), "../")
 
 
 def render_qa(settings, page, meta, tr, path_map, lang, nav=None) -> str:
     title_ru = tr.get(("title", 0))
     title_ja = meta.get("title") or ""
-    body = [f"<h1>{esc(title_ru or title_ja)}</h1>"]
-    if title_ru and title_ja:
+    title = title_ja if lang == "ja" and title_ja else (title_ru or title_ja)
+    body = [f"<h1>{esc(title)}</h1>"]
+    if lang == "both" and title_ru and title_ja:
         body.append(f"<div class='ja'>{esc(title_ja)}</div>")
-    bits = [meta.get("author"), meta.get("date"), f"ответов {len(meta.get('answers') or [])}"]
+    bits = [
+        meta.get("author"),
+        ru_date(meta.get("date")),
+        f"ответов {len(meta.get('answers') or [])}",
+    ]
     body.append(
         "<div class='meta'>"
         + "".join(f"<span>{esc(str(b))}</span>" for b in bits if b)
@@ -568,14 +638,15 @@ def render_qa(settings, page, meta, tr, path_map, lang, nav=None) -> str:
         if media:
             body.append(f"<figure><img loading='lazy' src='../{esc(media)}' alt=''></figure>")
     body.append(nav_links(nav))
-    return layout(title_ru or title_ja, "".join(body), "../")
+    return layout(title, "".join(body), "../")
 
 
 def render_model(settings, page, meta, tr, path_map, lang, related=None, nav=None) -> str:
     title_ru = tr.get(("title", 0))
     title_ja = meta.get("title") or ""
-    body = [f"<h1>{esc(title_ru or title_ja)}</h1>"]
-    if title_ru and title_ja:
+    title = title_ja if lang == "ja" and title_ja else (title_ru or title_ja)
+    body = [f"<h1>{esc(title)}</h1>"]
+    if lang == "both" and title_ru and title_ja:
         body.append(f"<div class='ja'>{esc(title_ja)}</div>")
     body.append(bilingual(tr.get(("description", 1)), meta.get("description"), lang))
     body.append(
@@ -607,7 +678,7 @@ def render_model(settings, page, meta, tr, path_map, lang, related=None, nav=Non
                 "<a href='../index.html'>общем индексе</a></div>"
             )
     body.append(nav_links(nav))
-    return layout(title_ru or title_ja, "".join(body), "../")
+    return layout(title, "".join(body), "../")
 
 
 RENDERERS = {
@@ -716,7 +787,7 @@ def render_open_page() -> str:
     )
 
 
-def render_index(entries: list[dict]) -> str:
+def render_index(entries: list[dict], lang: str = "ru") -> str:
     return (
         "<!doctype html><html lang='ru'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
@@ -743,7 +814,7 @@ def render_index(entries: list[dict]) -> str:
         "</div></div>"
         "<footer>Личный офлайн-архив. Контент принадлежит авторам и Carview.</footer>"
         "<script src='search-index.js'></script><script>"
-        + INDEX_JS.replace("__KIND_LABELS__", KIND_LABELS_JS)
+        + INDEX_JS.replace("__KIND_LABELS__", KIND_LABELS_JS).replace("__SHOW_JA__", "true" if lang == "both" else "false")
         + "</script>"
         "</body></html>"
     )
@@ -751,11 +822,12 @@ def render_index(entries: list[dict]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Сборка офлайн-сайта")
-    parser.add_argument("--lang", choices=["both", "ru", "ja"], default="both")
+    parser.add_argument("--lang", choices=["both", "ru", "ja"], default="ru")
     parser.add_argument("--clean", action="store_true", help="удалить out/site перед сборкой")
     args = parser.parse_args()
 
     settings = load_settings()
+    load_taxonomy(settings)
     store = Store(settings.db_path)
     store.init()
 
@@ -782,10 +854,10 @@ def main() -> int:
                 "k": page["kind"],
                 "tr": tr.get(("title", 0)) or "",
                 "tj": meta.get("title") or "",
-                "d": meta.get("date") or "",
-                "c": " / ".join(meta.get("categories") or []),
+                "d": ru_date(meta.get("date")),
+                "c": " / ".join(ru_category(c) for c in (meta.get("categories") or [])),
                 "m": page["model"] or "",
-                "mn": meta.get("car_model") or meta.get("model") or "",
+                "mn": ru_model(meta.get("car_model") or meta.get("model")),
                 "g": page["generation"],
                 "uid": page["uid"],
                 "car": page["car"],
@@ -935,7 +1007,7 @@ def main() -> int:
         "window.MINKARA_INDEX = " + json.dumps(entries, ensure_ascii=False) + ";",
         encoding="utf-8",
     )
-    (settings.site_dir / "index.html").write_text(render_index(entries), encoding="utf-8")
+    (settings.site_dir / "index.html").write_text(render_index(entries, args.lang), encoding="utf-8")
 
     print(f"Собрано страниц: {built}")
     print(f"Сайт: {settings.site_dir}/index.html")
