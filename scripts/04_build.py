@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import os
@@ -485,8 +486,11 @@ def ensure_media(settings, media_url: str) -> str | None:
             rel, src = webp_rel, webp_src
         else:
             return None
-    link_or_copy(src, settings.site_dir / "media" / rel)
-    return f"media/{rel}"
+    digest = hashlib.sha1(absolute.encode()).hexdigest()
+    suffix = Path(rel).suffix or ".bin"
+    flat = f"{digest[:2]}/{digest[:16]}{suffix}"
+    link_or_copy(src, settings.site_dir / "media" / flat)
+    return f"media/{flat}"
 
 
 def layout(title: str, body: str, depth: str = "") -> str:
