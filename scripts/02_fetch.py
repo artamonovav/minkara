@@ -76,30 +76,32 @@ def parse_page(kind: str, html: str, url: str) -> dict:
     return parser(html, url)
 
 
-def fetch_cars(store: Store, settings, fetcher: Fetcher, rules: dict, limit: int | None) -> int:
+def car_url(settings, car) -> str:
+    car_id = int(car["car_id"])
+    return car["url"] or (
+        f"{settings.base_url}/userid/{car['uid']}/car/{car_id}/profile.aspx"
+    )
+
+
+def fetch_cars(
+    store: Store,
+    settings,
+    fetcher: Fetcher,
+    rules: dict,
+    limit: int | None,
+    workers: int = 1,
+) -> int:
     pending = store.pending_cars(limit=limit)
     already = store.conn.execute(
         "SELECT COUNT(*) FROM cars WHERE state IN ('parsed','skipped','error')"
     ).fetchone()[0]
     progress = Progress(already + len(pending), "машины")
     done = 0
-    for car in pending:
+
+    def apply(car, html: str) -> None:
+        nonlocal done
         car_id = int(car["car_id"])
-        if car_id == 0:
-            store.upsert_car(0, state="skipped")
-            done += 1
-            progress.update(already + done, "car 0 пропущен")
-            continue
-        url = car["url"] or (
-            f"{settings.base_url}/userid/{car['uid']}/car/{car_id}/profile.aspx"
-        )
-        try:
-            html = fetcher.text(url)
-        except FetchError as exc:
-            store.upsert_car(car_id, state="error", error=str(exc))
-            done += 1
-            progress.update(already + done, f"car {car_id}: ошибка")
-            continue
+        url = car_url(settings, car)
         info = urls.classify(url)
         save_raw(settings, info, html)
         parsed = parse.parse_profile(html, url)
@@ -127,6 +129,51 @@ def fetch_cars(store: Store, settings, fetcher: Fetcher, rules: dict, limit: int
             already + done,
             f"car {car_id}: {parsed.get('code') or '?'} -> поколение {generation}",
         )
+
+    def failed(car, exc: Exception) -> None:
+        nonlocal done
+        car_id = int(car["car_id"])
+        store.upsert_car(car_id, state="error", error=str(exc))
+        done += 1
+        progress.update(already + done, f"car {car_id}: ошибка")
+
+    if workers <= 1:
+        for car in pending:
+            car_id = int(car["car_id"])
+            if car_id == 0:
+                store.upsert_car(0, state="skipped")
+                done += 1
+                progress.update(already + done, "car 0 пропущен")
+                continue
+            try:
+                html = fetcher.text(car_url(settings, car))
+            except BlockedError:
+                raise
+            except FetchError as exc:
+                failed(car, exc)
+                continue
+            apply(car, html)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {}
+            for car in pending:
+                car_id = int(car["car_id"])
+                if car_id == 0:
+                    store.upsert_car(0, state="skipped")
+                    done += 1
+                    progress.update(already + done, "car 0 пропущен")
+                    continue
+                futures[pool.submit(fetcher.text, car_url(settings, car))] = car
+            for future in as_completed(futures):
+                car = futures[future]
+                try:
+                    html = future.result()
+                except BlockedError:
+                    raise
+                except FetchError as exc:
+                    failed(car, exc)
+                    continue
+                apply(car, html)
     progress.close(already + done)
     return done
 
@@ -352,6 +399,9 @@ def main() -> int:
         "--asset-delay", type=float, default=0.15, help="пауза между запросами медиа"
     )
     parser.add_argument("--no-assets", action="store_true", help="не скачивать медиа")
+    parser.add_argument(
+        "--skip-cars", action="store_true", help="не качать профили машин"
+    )
     parser.add_argument("--with-thumbs", action="store_true", help="качать и миниатюры")
     parser.add_argument("--retry-errors", action="store_true", help="повторить страницы с ошибками")
     parser.add_argument("--reparse", action="store_true", help="только переразобрать сохранённый HTML")
@@ -383,8 +433,18 @@ def main() -> int:
     try:
         cars = pages = assets = 0
         if not args.only_assets:
-            print("== профили машин ==")
-            cars = fetch_cars(store, settings, fetcher, rules, cars_limit)
+            if args.skip_cars:
+                print("== профили машин: пропущено ==")
+            else:
+                print("== профили машин ==")
+                cars = fetch_cars(
+                    store,
+                    settings,
+                    fetcher,
+                    rules,
+                    cars_limit,
+                    workers=args.workers,
+                )
             print("== страницы ==")
             pages = fetch_pages(
                 store,

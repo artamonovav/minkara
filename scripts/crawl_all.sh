@@ -63,40 +63,47 @@ ASSET_DELAY="${MINKARA_ASSET_DELAY:-0.15}"
 
 DISCOVER_MARKER="$ROOT/work/discover.done"
 if [ -f "$DISCOVER_MARKER" ] && [ "${MINKARA_REFRESH:-0}" != "1" ]; then
-  say "1/7 discover пропущен: есть маркер $DISCOVER_MARKER"
+  say "1/9 discover пропущен: есть маркер $DISCOVER_MARKER"
   say "    (MINKARA_REFRESH=1 или удалить маркер — чтобы обойти листинги заново)"
 else
-  say "1/7 discover (note, partsreview, review, qa)"
+  say "1/9 discover: модельные листинги заметок"
   "$PY" scripts/01_discover.py --brand honda "${MODELS_ARG[@]}" \
     --sections note
   touch "$DISCOVER_MARKER"
   say "discover завершён, маркер создан"
 fi
 
-say "2/7 fetch: машины, заметки, страницы моделей (workers=${WORKERS}, delay=${PAGE_DELAY})"
-"$PY" scripts/02_fetch.py --kind note,model --no-assets \
+say "2/9 машины: полные списки 愛車紹介 по всем модификациям"
+"$PY" scripts/01b_usercars.py --brand honda "${MODELS_ARG[@]}" \
+  --sorts 8,1 --workers "$WORKERS" --delay "$PAGE_DELAY"
+
+say "3/9 профили машин и страницы моделей"
+"$PY" scripts/02_fetch.py --kind model --no-assets --workers "$WORKERS" \
+  --delay "$PAGE_DELAY"
+
+say "4/9 полные списки заметок по каждой машине"
+"$PY" scripts/01c_car_notes.py --workers "$WORKERS" --delay "$PAGE_DELAY"
+
+say "5/9 догрузка заметок (workers=${WORKERS}, delay=${PAGE_DELAY})"
+"$PY" scripts/02_fetch.py --kind note --no-assets --skip-cars \
   --workers "$WORKERS" --delay "$PAGE_DELAY"
 
-say "3/7 товары/запчасти/отзывы отключены — пропуск"
-
-say "4/7 Q&A/отзывы отключены — пропуск"
-
 if [ "${MINKARA_SKIP_ASSETS:-0}" = "1" ]; then
-  say "5/7 медиа пропущено (MINKARA_SKIP_ASSETS=1)"
+  say "6/9 медиа пропущено (MINKARA_SKIP_ASSETS=1)"
 else
-  say "5/7 медиа (workers=${ASSET_WORKERS}, delay=${ASSET_DELAY})"
+  say "6/9 медиа (workers=${ASSET_WORKERS}, delay=${ASSET_DELAY})"
   "$PY" scripts/02_fetch.py --only-assets \
     --asset-workers "$ASSET_WORKERS" --asset-delay "$ASSET_DELAY"
 fi
 
 if [ "${MINKARA_CRAWL_TRANSLATE:-0}" = "1" ]; then
-  say "6/7 перевод"
+  say "7/9 перевод"
   "$PY" scripts/03_translate.py
 else
-  say "6/7 перевод пропущен (MINKARA_CRAWL_TRANSLATE=1 чтобы включить)"
+  say "7/9 перевод пропущен (MINKARA_CRAWL_TRANSLATE=1 чтобы включить)"
 fi
 
-say "7/7 сборка сайта"
+say "8/9 сборка сайта"
 "$PY" scripts/04_build.py
 
 say "DONE crawl_all"

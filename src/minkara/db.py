@@ -52,6 +52,13 @@ CREATE TABLE IF NOT EXISTS cars (
 );
 CREATE INDEX IF NOT EXISTS ix_cars_state ON cars(state);
 
+CREATE TABLE IF NOT EXISTS car_notes_done (
+    car_id INTEGER PRIMARY KEY,
+    pages INTEGER NOT NULL DEFAULT 0,
+    found INTEGER NOT NULL DEFAULT 0,
+    crawled_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS assets (
     id INTEGER PRIMARY KEY,
     url TEXT UNIQUE NOT NULL,
