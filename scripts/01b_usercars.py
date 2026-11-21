@@ -53,6 +53,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Обход списков машин по моделям")
     parser.add_argument("--brand", default="honda")
     parser.add_argument("--models", help="ключи моделей через запятую (по умолчанию все)")
+    parser.add_argument(
+        "--match", help="подстрока в ключе/имени модели (например freed)"
+    )
     parser.add_argument("--max-pages", type=int, default=300)
     parser.add_argument(
         "--sorts",
@@ -73,6 +76,11 @@ def main() -> int:
         args.brand,
         args.models.split(",") if args.models else None,
     )
+    if args.match:
+        needle = args.match.lower()
+        models = [
+            m for m in models if needle in m.key.lower() or needle in m.name.lower()
+        ]
     if not models:
         print("Нет моделей под указанные фильтры")
         return 1
